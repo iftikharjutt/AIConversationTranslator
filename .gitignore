@@ -64,3 +64,4 @@ backend/*.log
 secrets.properties
 .gitconfig
 package-lock.json
+/.npm
