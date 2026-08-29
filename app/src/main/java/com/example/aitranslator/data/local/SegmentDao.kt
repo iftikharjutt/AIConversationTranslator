@@ -37,4 +37,7 @@ interface SegmentDao {
 
     @Query("SELECT * FROM segments WHERE conversationId = :conversationId AND segmentNumber < :currentSegmentNumber AND status = 'COMPLETED' ORDER BY segmentNumber DESC LIMIT :limit")
     suspend fun getRecentCompletedSegments(conversationId: Long, currentSegmentNumber: Int, limit: Int): List<SegmentEntity>
+
+    @Query("SELECT * FROM segments ORDER BY id DESC LIMIT :limit")
+    fun observeLatestSegments(limit: Int): Flow<List<SegmentEntity>>
 }

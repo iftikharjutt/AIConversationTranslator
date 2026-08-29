@@ -158,8 +158,185 @@ fun SettingsScreen(
                 }
             }
 
+            // Gemini AI Translation Configuration
+            Text("Gemini AI Engine (Recommended)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    var showApiKeyDialog by remember { mutableStateOf(false) }
+                    var tempApiKey by remember { mutableStateOf("") }
+                    var testStatusMessage by remember { mutableStateOf<String?>(null) }
+                    var isTesting by remember { mutableStateOf(false) }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                tempApiKey = state.geminiApiKey
+                                testStatusMessage = null
+                                showApiKeyDialog = true
+                            }
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Google Gemini API Key", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            Text(
+                                text = if (state.geminiApiKey.isNotBlank()) "••••••••••••" + state.geminiApiKey.takeLast(4) else "Not configured (Required for AI translation)",
+                                fontSize = 13.sp,
+                                color = if (state.geminiApiKey.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            )
+                        }
+                        TextButton(onClick = {
+                            tempApiKey = state.geminiApiKey
+                            testStatusMessage = null
+                            showApiKeyDialog = true
+                        }) {
+                            Text(if (state.geminiApiKey.isNotBlank()) "Edit" else "Set Key")
+                        }
+                    }
+
+                    Divider()
+
+                    var showModelDialog by remember { mutableStateOf(false) }
+                    val geminiModels = listOf(
+                        "gemini-1.5-flash" to "Gemini 1.5 Flash (Fast & Recommended)",
+                        "gemini-2.0-flash" to "Gemini 2.0 Flash (Next-Gen Fast)",
+                        "gemini-1.5-pro" to "Gemini 1.5 Pro (High Reasoning)"
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showModelDialog = true }
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Gemini Model", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            Text(
+                                text = geminiModels.find { it.first == state.geminiModel }?.second ?: state.geminiModel,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (state.geminiApiKey.isNotBlank()) {
+                        Divider()
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Test API Connection", fontSize = 14.sp)
+                            Button(
+                                onClick = {
+                                    isTesting = true
+                                    testStatusMessage = "Testing..."
+                                    viewModel.testGeminiApiKey(state.geminiApiKey, state.geminiModel) { success, msg ->
+                                        isTesting = false
+                                        testStatusMessage = msg
+                                    }
+                                },
+                                enabled = !isTesting
+                            ) {
+                                Text(if (isTesting) "Testing..." else "Test Connection")
+                            }
+                        }
+                        if (testStatusMessage != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = testStatusMessage!!,
+                                fontSize = 12.sp,
+                                color = if (testStatusMessage?.startsWith("Success") == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+
+                    if (showApiKeyDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showApiKeyDialog = false },
+                            title = { Text("Set Gemini API Key") },
+                            text = {
+                                Column {
+                                    Text(
+                                        "Enter your Google Gemini API key to enable direct cloud AI speech translation without any local proxy server.",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    OutlinedTextField(
+                                        value = tempApiKey,
+                                        onValueChange = { tempApiKey = it },
+                                        singleLine = true,
+                                        label = { Text("Gemini API Key (AIza...)") },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.setGeminiApiKey(tempApiKey.trim())
+                                        showApiKeyDialog = false
+                                    }
+                                ) {
+                                    Text("Save Key")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showApiKeyDialog = false }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        )
+                    }
+
+                    if (showModelDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showModelDialog = false },
+                            title = { Text("Select Gemini Model") },
+                            text = {
+                                Column {
+                                    geminiModels.forEach { (modelKey, label) ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    viewModel.setGeminiModel(modelKey)
+                                                    showModelDialog = false
+                                                }
+                                                .padding(vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = state.geminiModel == modelKey,
+                                                onClick = {
+                                                    viewModel.setGeminiModel(modelKey)
+                                                    showModelDialog = false
+                                                }
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(label, fontSize = 14.sp)
+                                        }
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(onClick = { showModelDialog = false }) {
+                                    Text("Close")
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
             // Backend Server Configuration
-            Text("Backend Connection", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Text("Custom Proxy Server (Optional)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(
@@ -174,7 +351,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("Backend API URL", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            Text("Fallback Proxy URL", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                             Text(state.backendUrl, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }

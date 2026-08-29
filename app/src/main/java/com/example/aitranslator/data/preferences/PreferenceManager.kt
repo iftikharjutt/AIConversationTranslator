@@ -34,6 +34,16 @@ class PreferenceManager @Inject constructor(
         val KEY_DELETE_AUDIO_AFTER_PROCESSING = booleanPreferencesKey("delete_audio_after_processing")
         val KEY_BACKEND_URL = stringPreferencesKey("backend_url")
         val KEY_DEBUG_MODE = booleanPreferencesKey("debug_mode")
+        val KEY_GEMINI_API_KEY = stringPreferencesKey("gemini_api_key")
+        val KEY_GEMINI_MODEL = stringPreferencesKey("gemini_model")
+    }
+
+    val geminiApiKey: Flow<String> = dataStore.data.map { prefs ->
+        prefs[KEY_GEMINI_API_KEY] ?: ""
+    }
+
+    val geminiModel: Flow<String> = dataStore.data.map { prefs ->
+        prefs[KEY_GEMINI_MODEL] ?: "gemini-1.5-flash"
     }
 
     val sourceLanguageCode: Flow<String> = dataStore.data.map { prefs ->
@@ -112,5 +122,13 @@ class PreferenceManager @Inject constructor(
 
     suspend fun setDebugMode(enabled: Boolean) {
         dataStore.edit { it[KEY_DEBUG_MODE] = enabled }
+    }
+
+    suspend fun setGeminiApiKey(apiKey: String) {
+        dataStore.edit { it[KEY_GEMINI_API_KEY] = apiKey.trim() }
+    }
+
+    suspend fun setGeminiModel(model: String) {
+        dataStore.edit { it[KEY_GEMINI_MODEL] = model.trim() }
     }
 }

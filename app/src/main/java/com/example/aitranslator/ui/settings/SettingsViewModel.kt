@@ -3,6 +3,7 @@ package com.example.aitranslator.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.aitranslator.data.preferences.PreferenceManager
+import com.example.aitranslator.domain.repository.TranslationRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,29 +18,44 @@ data class SettingsUiState(
     val saveAudio: Boolean = true,
     val deleteAudioAfterProcessing: Boolean = false,
     val backendUrl: String = "",
-    val isDebugMode: Boolean = true
+    val isDebugMode: Boolean = true,
+    val geminiApiKey: String = "",
+    val geminiModel: String = "gemini-1.5-flash"
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val preferenceManager: PreferenceManager
+    private val preferenceManager: PreferenceManager,
+    private val repository: TranslationRepository
 ) : ViewModel() {
 
     val uiState: StateFlow<SettingsUiState> = combine(
-        preferenceManager.segmentDurationSeconds,
-        preferenceManager.autoPlayTts,
-        preferenceManager.saveAudio,
-        preferenceManager.deleteAudioAfterProcessing,
-        preferenceManager.backendUrl,
-        preferenceManager.isDebugMode
-    ) { args: Array<Any> ->
+        combine(
+            preferenceManager.segmentDurationSeconds,
+            preferenceManager.autoPlayTts,
+            preferenceManager.saveAudio,
+            preferenceManager.deleteAudioAfterProcessing
+        ) { duration, autoTts, saveAud, delAud ->
+            SettingsPart1(duration, autoTts, saveAud, delAud)
+        },
+        combine(
+            preferenceManager.backendUrl,
+            preferenceManager.isDebugMode,
+            preferenceManager.geminiApiKey,
+            preferenceManager.geminiModel
+        ) { url, debug, apiKey, model ->
+            SettingsPart2(url, debug, apiKey, model)
+        }
+    ) { p1, p2 ->
         SettingsUiState(
-            segmentDuration = args[0] as Int,
-            autoPlayTts = args[1] as Boolean,
-            saveAudio = args[2] as Boolean,
-            deleteAudioAfterProcessing = args[3] as Boolean,
-            backendUrl = args[4] as String,
-            isDebugMode = args[5] as Boolean
+            segmentDuration = p1.duration,
+            autoPlayTts = p1.autoTts,
+            saveAudio = p1.saveAud,
+            deleteAudioAfterProcessing = p1.delAud,
+            backendUrl = p2.url,
+            isDebugMode = p2.debug,
+            geminiApiKey = p2.apiKey,
+            geminiModel = p2.model
         )
     }.stateIn(
         viewModelScope,
@@ -70,4 +86,38 @@ class SettingsViewModel @Inject constructor(
     fun setDebugMode(debug: Boolean) {
         viewModelScope.launch { preferenceManager.setDebugMode(debug) }
     }
+
+    fun setGeminiApiKey(key: String) {
+        viewModelScope.launch { preferenceManager.setGeminiApiKey(key) }
+    }
+
+    fun setGeminiModel(model: String) {
+        viewModelScope.launch { preferenceManager.setGeminiModel(model) }
+    }
+
+    fun testGeminiApiKey(apiKey: String, model: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.testGeminiApiKey(apiKey, model)
+            if (result.isSuccess) {
+                onResult(true, "Successfully connected to Gemini API (${model})!")
+            } else {
+                onResult(false, result.exceptionOrNull()?.message ?: "Connection test failed")
+            }
+        }
+    }
 }
+
+private data class SettingsPart1(
+    val duration: Int,
+    val autoTts: Boolean,
+    val saveAud: Boolean,
+    val delAud: Boolean
+)
+
+private data class SettingsPart2(
+    val url: String,
+    val debug: Boolean,
+    val apiKey: String,
+    val model: String
+)
+

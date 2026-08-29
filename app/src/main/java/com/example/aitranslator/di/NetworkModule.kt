@@ -1,6 +1,7 @@
 package com.example.aitranslator.di
 
 import com.example.aitranslator.BuildConfig
+import com.example.aitranslator.data.remote.GeminiApi
 import com.example.aitranslator.data.remote.SpeechApi
 import com.example.aitranslator.data.remote.TranslationApi
 import dagger.Module
@@ -63,4 +64,17 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideTranslationApi(retrofit: Retrofit): TranslationApi = retrofit.create(TranslationApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideGeminiApi(okHttpClient: OkHttpClient, json: Json): GeminiApi {
+        val contentType = "application/json".toMediaType()
+        return Retrofit.Builder()
+            .baseUrl("https://generativelanguage.googleapis.com/")
+            .client(okHttpClient)
+            .addConverterFactory(json.asConverterFactory(contentType))
+            .build()
+            .create(GeminiApi::class.java)
+    }
 }
+
