@@ -11,8 +11,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -30,6 +32,7 @@ import androidx.core.content.ContextCompat
 import com.example.aitranslator.domain.model.Conversation
 import com.example.aitranslator.domain.model.Language
 import com.example.aitranslator.ui.recording.SegmentCard
+import com.example.aitranslator.util.Constants
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -556,15 +559,10 @@ fun GeminiApiKeyDialog(
     onTest: (String, String, (Boolean, String) -> Unit) -> Unit
 ) {
     var apiKeyInput by remember { mutableStateOf(currentKey) }
-    var selectedModel by remember { mutableStateOf(if (currentModel.isNotBlank()) currentModel else "gemini-1.5-flash") }
+    var selectedModel by remember { mutableStateOf(if (currentModel.isNotBlank()) currentModel else Constants.GEMINI_DEFAULT_MODEL) }
+    var customModelInput by remember { mutableStateOf("") }
     var testResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var isTesting by remember { mutableStateOf(false) }
-
-    val models = listOf(
-        "gemini-1.5-flash" to "Gemini 1.5 Flash (Fast & Recommended)",
-        "gemini-2.0-flash" to "Gemini 2.0 Flash (Next-Gen Fast)",
-        "gemini-1.5-pro" to "Gemini 1.5 Pro (High Reasoning)"
-    )
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -576,7 +574,12 @@ fun GeminiApiKeyDialog(
             }
         },
         text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Text(
                     "Enter your Google Gemini API Key. Direct audio processing & translation is handled seamlessly in the cloud.",
                     fontSize = 12.sp,
@@ -600,24 +603,54 @@ fun GeminiApiKeyDialog(
                 Text("Select Model:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 Spacer(modifier = Modifier.height(4.dp))
 
-                models.forEach { (modelKey, label) ->
+                Constants.GEMINI_MODELS.forEach { modelOpt ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { selectedModel = modelKey }
+                            .clickable {
+                                selectedModel = modelOpt.id
+                                customModelInput = ""
+                            }
                             .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
-                            selected = selectedModel == modelKey,
-                            onClick = { selectedModel = modelKey }
+                            selected = selectedModel == modelOpt.id,
+                            onClick = {
+                                selectedModel = modelOpt.id
+                                customModelInput = ""
+                            }
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(label, fontSize = 12.sp)
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(modelOpt.name, fontSize = 12.sp, fontWeight = if (selectedModel == modelOpt.id) FontWeight.Bold else FontWeight.Normal)
+                                if (modelOpt.isRecommended) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("⭐", fontSize = 11.sp)
+                                }
+                            }
+                            Text(modelOpt.description, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = customModelInput,
+                    onValueChange = {
+                        customModelInput = it
+                        if (it.isNotBlank()) {
+                            selectedModel = it.trim()
+                        }
+                    },
+                    label = { Text("Or Custom Model ID") },
+                    placeholder = { Text("e.g. gemini-3.7-flash") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

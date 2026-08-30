@@ -21,4 +21,26 @@ object Constants {
     // WorkManager
     const val WORKER_SEGMENT_ID_KEY = "key_segment_id"
     const val WORKER_CONVERSATION_ID_KEY = "key_conversation_id"
+
+    // Gemini AI Models
+    const val GEMINI_DEFAULT_MODEL = "gemini-3.7-flash"
+
+    val GEMINI_MODELS = listOf(
+        GeminiModelOption("gemini-3.7-flash", "Gemini 3.7 Flash", "Latest frontier intelligence & rapid translation (Recommended)", true),
+        GeminiModelOption("gemini-3.6-flash", "Gemini 3.6 Flash", "High performance multimodal translation", false),
+        GeminiModelOption("gemini-3.5-flash", "Gemini 3.5 Flash", "Fast, high quality conversational audio processing", false),
+        GeminiModelOption("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "Ultra low latency & high throughput", false),
+        GeminiModelOption("gemini-2.5-flash", "Gemini 2.5 Flash", "Stable high speed multimodal model", false),
+        GeminiModelOption("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", "Lightweight and efficient", false),
+        GeminiModelOption("gemini-2.5-pro", "Gemini 2.5 Pro", "High reasoning & nuanced accuracy", false),
+        GeminiModelOption("gemini-2.0-flash", "Gemini 2.0 Flash", "Multimodal audio translation", false),
+        GeminiModelOption("gemini-1.5-flash", "Gemini 1.5 Flash", "Legacy fast model", false)
+    )
 }
+
+data class GeminiModelOption(
+    val id: String,
+    val name: String,
+    val description: String,
+    val isRecommended: Boolean = false
+)

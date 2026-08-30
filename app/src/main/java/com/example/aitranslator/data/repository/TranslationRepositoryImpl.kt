@@ -19,6 +19,7 @@ import com.example.aitranslator.domain.model.Language
 import com.example.aitranslator.domain.model.SegmentStatus
 import com.example.aitranslator.domain.model.TranslationSegment
 import com.example.aitranslator.domain.repository.TranslationRepository
+import com.example.aitranslator.util.Constants
 import com.example.aitranslator.util.FileUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -175,7 +176,7 @@ class TranslationRepositoryImpl @Inject constructor(
                 )
             )
 
-            val modelName = if (model.isNotBlank()) model else "gemini-1.5-flash"
+            val modelName = if (model.isNotBlank()) model else Constants.GEMINI_DEFAULT_MODEL
             val response = geminiApi.generateContent(
                 model = modelName,
                 apiKey = apiKey,
@@ -220,7 +221,7 @@ class TranslationRepositoryImpl @Inject constructor(
                     )
                 )
             )
-            val modelName = if (model.isNotBlank()) model else "gemini-1.5-flash"
+            val modelName = if (model.isNotBlank()) model else Constants.GEMINI_DEFAULT_MODEL
             val response = geminiApi.generateContent(
                 model = modelName,
                 apiKey = apiKey,

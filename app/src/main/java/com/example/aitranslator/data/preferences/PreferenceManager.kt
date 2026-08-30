@@ -43,7 +43,7 @@ class PreferenceManager @Inject constructor(
     }
 
     val geminiModel: Flow<String> = dataStore.data.map { prefs ->
-        prefs[KEY_GEMINI_MODEL] ?: "gemini-1.5-flash"
+        prefs[KEY_GEMINI_MODEL] ?: Constants.GEMINI_DEFAULT_MODEL
     }
 
     val sourceLanguageCode: Flow<String> = dataStore.data.map { prefs ->

@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.aitranslator.util.Constants
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -199,11 +200,6 @@ fun SettingsScreen(
                     Divider()
 
                     var showModelDialog by remember { mutableStateOf(false) }
-                    val geminiModels = listOf(
-                        "gemini-1.5-flash" to "Gemini 1.5 Flash (Fast & Recommended)",
-                        "gemini-2.0-flash" to "Gemini 2.0 Flash (Next-Gen Fast)",
-                        "gemini-1.5-pro" to "Gemini 1.5 Pro (High Reasoning)"
-                    )
 
                     Row(
                         modifier = Modifier
@@ -213,13 +209,17 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text("Gemini Model", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            val currentOption = Constants.GEMINI_MODELS.find { it.id == state.geminiModel }
                             Text(
-                                text = geminiModels.find { it.first == state.geminiModel }?.second ?: state.geminiModel,
+                                text = currentOption?.let { "${it.name} (${it.id})" } ?: state.geminiModel,
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                        TextButton(onClick = { showModelDialog = true }) {
+                            Text("Change")
                         }
                     }
 
@@ -296,31 +296,72 @@ fun SettingsScreen(
                     }
 
                     if (showModelDialog) {
+                        var customModelInput by remember { mutableStateOf("") }
+                        var isCustomSelected by remember { mutableStateOf(Constants.GEMINI_MODELS.none { it.id == state.geminiModel }) }
+
                         AlertDialog(
                             onDismissRequest = { showModelDialog = false },
-                            title = { Text("Select Gemini Model") },
+                            title = { Text("Select Gemini Model", fontWeight = FontWeight.Bold) },
                             text = {
-                                Column {
-                                    geminiModels.forEach { (modelKey, label) ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .verticalScroll(rememberScrollState())
+                                ) {
+                                    Constants.GEMINI_MODELS.forEach { modelOpt ->
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .clickable {
-                                                    viewModel.setGeminiModel(modelKey)
+                                                    viewModel.setGeminiModel(modelOpt.id)
                                                     showModelDialog = false
                                                 }
-                                                .padding(vertical = 10.dp),
+                                                .padding(vertical = 8.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             RadioButton(
-                                                selected = state.geminiModel == modelKey,
+                                                selected = state.geminiModel == modelOpt.id,
                                                 onClick = {
-                                                    viewModel.setGeminiModel(modelKey)
+                                                    viewModel.setGeminiModel(modelOpt.id)
                                                     showModelDialog = false
                                                 }
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(label, fontSize = 14.sp)
+                                            Column {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(modelOpt.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                                    if (modelOpt.isRecommended) {
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text("(Recommended)", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                                Text(modelOpt.description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text("ID: ${modelOpt.id}", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                                            }
+                                        }
+                                    }
+
+                                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                                    Text("Or Custom Model ID:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    OutlinedTextField(
+                                        value = customModelInput,
+                                        onValueChange = { customModelInput = it },
+                                        placeholder = { Text("e.g. gemini-3.7-flash") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    if (customModelInput.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Button(
+                                            onClick = {
+                                                viewModel.setGeminiModel(customModelInput.trim())
+                                                showModelDialog = false
+                                            },
+                                            modifier = Modifier.align(Alignment.End)
+                                        ) {
+                                            Text("Apply Custom Model")
                                         }
                                     }
                                 }
