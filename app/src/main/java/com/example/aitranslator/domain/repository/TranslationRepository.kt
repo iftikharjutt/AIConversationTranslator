@@ -24,18 +24,7 @@ interface TranslationRepository {
     suspend fun deleteSegment(segmentId: Long)
     suspend fun retrySegment(segmentId: Long)
 
-    suspend fun processAudioWithGemini(
-        audioFile: File,
-        sourceLanguage: String,
-        targetLanguage: String,
-        context: String?,
-        apiKey: String,
-        model: String
-    ): Result<Pair<String, String>>
-
-    suspend fun testGeminiApiKey(apiKey: String, model: String): Result<String>
-    suspend fun fetchEligibleModels(apiKey: String): Result<List<com.example.aitranslator.util.GeminiModelOption>>
-
+    suspend fun testBackendConnection(): Result<String>
     suspend fun transcribeAudio(audioFile: File, languageCode: String): Result<String>
     suspend fun translateText(text: String, sourceLanguage: String, targetLanguage: String, context: String?): Result<String>
     suspend fun getRecentContext(conversationId: Long, currentSegmentNumber: Int, windowSize: Int = 3): String

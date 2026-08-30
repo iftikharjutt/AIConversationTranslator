@@ -33,7 +33,6 @@ import com.example.aitranslator.domain.model.Conversation
 import com.example.aitranslator.domain.model.Language
 import com.example.aitranslator.ui.recording.SegmentCard
 import com.example.aitranslator.util.Constants
-import com.example.aitranslator.util.GeminiModelOption
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -51,7 +50,7 @@ fun HomeScreen(
 
     var showSourceLangDialog by remember { mutableStateOf(false) }
     var showTargetLangDialog by remember { mutableStateOf(false) }
-    var showApiKeyDialog by remember { mutableStateOf(false) }
+    var showBackendDialog by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) } // 0: Live Translations, 1: Past Conversations
     var permissionDeniedMessage by remember { mutableStateOf<String?>(null) }
 
@@ -85,11 +84,7 @@ fun HomeScreen(
     ) { perms ->
         val recordAudioGranted = perms[Manifest.permission.RECORD_AUDIO] == true
         if (recordAudioGranted) {
-            if (state.geminiApiKey.isBlank()) {
-                showApiKeyDialog = true
-            } else {
-                viewModel.createConversationAndStart { }
-            }
+            viewModel.createConversationAndStart { }
         } else {
             permissionDeniedMessage = "Microphone permission is required to translate speech."
         }
@@ -103,8 +98,6 @@ fun HomeScreen(
 
         if (!hasAudioPermission) {
             permissionLauncher.launch(permissionsToRequest)
-        } else if (state.geminiApiKey.isBlank()) {
-            showApiKeyDialog = true
         } else {
             viewModel.toggleLiveRecording()
         }
@@ -121,18 +114,18 @@ fun HomeScreen(
                             fontSize = 18.sp
                         )
                         Text(
-                            text = if (state.geminiApiKey.isNotBlank()) "Gemini AI: ${state.geminiModel}" else "Gemini API: Key Required",
+                            text = "Continuous Voice Interpretation",
                             fontSize = 11.sp,
-                            color = if (state.geminiApiKey.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showApiKeyDialog = true }) {
+                    IconButton(onClick = { showBackendDialog = true }) {
                         Icon(
-                            Icons.Default.Key,
-                            contentDescription = "Gemini API Key",
-                            tint = if (state.geminiApiKey.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            Icons.Default.Dns,
+                            contentDescription = "Backend Server URL",
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                     IconButton(onClick = onOpenHistory) {
@@ -144,7 +137,8 @@ fun HomeScreen(
                 }
             )
         }
-    ) { padding ->
+    )
+ { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -153,57 +147,6 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(modifier = Modifier.height(6.dp))
-
-            // Gemini API Setup Card / Status Banner
-            if (state.geminiApiKey.isBlank()) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showApiKeyDialog = true },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.Warning,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.size(28.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Gemini API Key Required",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            Text(
-                                "Tap here to add your Google Gemini API key to enable AI translation.",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                        }
-                        Button(
-                            onClick = { showApiKeyDialog = true },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            ),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("Add Key", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-            }
 
             // Language Selector Card
             Card(
@@ -453,7 +396,7 @@ fun HomeScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "Tap START LIVE TRANSLATION to begin speaking.\nGemini AI translates 10s audio chunks directly on this page.",
+                                "Tap START LIVE TRANSLATION to begin speaking.\nLive continuous conversational voice translation will appear directly on this page.",
                                 color = MaterialTheme.colorScheme.outline,
                                 fontSize = 12.sp,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -509,22 +452,17 @@ fun HomeScreen(
         }
     }
 
-    // Gemini API Setup Dialog
-    if (showApiKeyDialog) {
-        GeminiApiKeyDialog(
-            currentKey = state.geminiApiKey,
-            currentModel = state.geminiModel,
-            onDismiss = { showApiKeyDialog = false },
-            onSave = { key, model ->
-                viewModel.saveGeminiApiKey(key)
-                viewModel.saveGeminiModel(model)
-                showApiKeyDialog = false
+    // Backend Server Setup Dialog
+    if (showBackendDialog) {
+        BackendServerDialog(
+            currentUrl = state.backendUrl,
+            onDismiss = { showBackendDialog = false },
+            onSave = { url ->
+                viewModel.setBackendUrl(url)
+                showBackendDialog = false
             },
-            onTest = { key, model, callback ->
-                viewModel.testGeminiApiKey(key, model, callback)
-            },
-            onFetchModels = { key, callback ->
-                viewModel.fetchEligibleModels(key, callback)
+            onTest = { callback ->
+                viewModel.testBackendConnection(callback)
             }
         )
     }
@@ -555,139 +493,46 @@ fun HomeScreen(
 }
 
 @Composable
-fun GeminiApiKeyDialog(
-    currentKey: String,
-    currentModel: String,
+fun BackendServerDialog(
+    currentUrl: String,
     onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit,
-    onTest: (String, String, (Boolean, String) -> Unit) -> Unit,
-    onFetchModels: (String, (List<GeminiModelOption>?, String?) -> Unit) -> Unit
+    onSave: (String) -> Unit,
+    onTest: ((Boolean, String) -> Unit) -> Unit
 ) {
-    var apiKeyInput by remember { mutableStateOf(currentKey) }
-    var selectedModel by remember { mutableStateOf(if (currentModel.isNotBlank()) currentModel else Constants.GEMINI_DEFAULT_MODEL) }
-    var customModelInput by remember { mutableStateOf("") }
-    var accountModels by remember { mutableStateOf<List<GeminiModelOption>?>(null) }
-    var isFetchingModels by remember { mutableStateOf(false) }
-    var fetchStatusMessage by remember { mutableStateOf<String?>(null) }
+    var urlInput by remember { mutableStateOf(currentUrl) }
     var testResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var isTesting by remember { mutableStateOf(false) }
-
-    val displayedModels = accountModels ?: Constants.GEMINI_MODELS
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Default.Dns, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Gemini AI API Configuration", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text("Backend Server Configuration", fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
         },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp)
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    "Enter your Google Gemini API Key. Direct audio processing & translation is handled seamlessly in the cloud.",
+                    "All AI speech recognition and contextual translation are processed securely via your backend service. Provider credentials never exist inside this app.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
                 OutlinedTextField(
-                    value = apiKeyInput,
+                    value = urlInput,
                     onValueChange = {
-                        apiKeyInput = it
+                        urlInput = it
                         testResult = null
-                        fetchStatusMessage = null
                     },
-                    label = { Text("Gemini API Key") },
-                    placeholder = { Text("AIzaSy...") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                if (apiKeyInput.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            isFetchingModels = true
-                            fetchStatusMessage = "Checking your Google account for eligible models..."
-                            onFetchModels(apiKeyInput.trim()) { list, error ->
-                                isFetchingModels = false
-                                if (list != null && list.isNotEmpty()) {
-                                    accountModels = list
-                                    fetchStatusMessage = "✅ Loaded ${list.size} eligible models from your Google account!"
-                                } else {
-                                    fetchStatusMessage = "⚠️ " + (error ?: "Could not query models list")
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !isFetchingModels
-                    ) {
-                        Text(if (isFetchingModels) "Checking Account..." else "🔄 Check My Account for Eligible Models", fontSize = 12.sp)
-                    }
-                    if (fetchStatusMessage != null) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = fetchStatusMessage!!,
-                            fontSize = 11.sp,
-                            color = if (fetchStatusMessage?.startsWith("✅") == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Select Model:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                Spacer(modifier = Modifier.height(4.dp))
-
-                displayedModels.forEach { modelOpt ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                selectedModel = modelOpt.id
-                                customModelInput = ""
-                            }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = selectedModel == modelOpt.id,
-                            onClick = {
-                                selectedModel = modelOpt.id
-                                customModelInput = ""
-                            }
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(modelOpt.name, fontSize = 12.sp, fontWeight = if (selectedModel == modelOpt.id) FontWeight.Bold else FontWeight.Normal)
-                                if (modelOpt.isRecommended) {
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("⭐", fontSize = 11.sp)
-                                }
-                            }
-                            Text(modelOpt.description, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = customModelInput,
-                    onValueChange = {
-                        customModelInput = it
-                        if (it.isNotBlank()) {
-                            selectedModel = it.trim()
-                        }
-                    },
-                    label = { Text("Or Custom Model ID") },
-                    placeholder = { Text("e.g. gemini-3.7-flash") },
+                    label = { Text("Backend Server URL") },
+                    placeholder = { Text("http://10.0.2.2:3000/") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -701,18 +546,16 @@ fun GeminiApiKeyDialog(
                 ) {
                     OutlinedButton(
                         onClick = {
-                            if (apiKeyInput.isNotBlank()) {
-                                isTesting = true
-                                testResult = null
-                                onTest(apiKeyInput.trim(), selectedModel) { success, msg ->
-                                    isTesting = false
-                                    testResult = Pair(success, msg)
-                                }
+                            isTesting = true
+                            testResult = null
+                            onTest { success, msg ->
+                                isTesting = false
+                                testResult = Pair(success, msg)
                             }
                         },
-                        enabled = apiKeyInput.isNotBlank() && !isTesting
+                        enabled = !isTesting
                     ) {
-                        Text(if (isTesting) "Testing..." else "Test Connection", fontSize = 12.sp)
+                        Text(if (isTesting) "Testing..." else "Test Health Check", fontSize = 12.sp)
                     }
                 }
 
@@ -730,10 +573,11 @@ fun GeminiApiKeyDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    onSave(apiKeyInput.trim(), selectedModel)
+                    val formatted = if (urlInput.endsWith("/")) urlInput.trim() else "${urlInput.trim()}/"
+                    onSave(formatted)
                 }
             ) {
-                Text("Save Key")
+                Text("Save")
             }
         },
         dismissButton = {
@@ -866,7 +710,7 @@ fun LanguageSelectionDialog(
                                 )
                             }
                         }
-                        Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     }
                 }
             }

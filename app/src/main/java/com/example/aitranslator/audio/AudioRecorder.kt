@@ -21,7 +21,6 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import kotlin.math.abs
 import kotlin.math.sqrt
 
 interface AudioSegmentListener {
@@ -35,7 +34,8 @@ class AudioRecorder(
 ) {
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
-    private val coroutineScope = CoroutineScope(Dispatchers.IO)
+    private val captureScope = CoroutineScope(Dispatchers.IO)
+    private val finalizerScope = CoroutineScope(Dispatchers.IO)
 
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
@@ -80,8 +80,8 @@ class AudioRecorder(
             audioRecord?.startRecording()
             _isRecording.value = true
 
-            recordingJob = coroutineScope.launch {
-                runRecordingLoop(bufferSize)
+            recordingJob = captureScope.launch {
+                runContinuousCaptureLoop(bufferSize)
             }
         } catch (e: Exception) {
             segmentListener?.onRecordingError("Failed to start recording: ${e.message}")
@@ -89,66 +89,134 @@ class AudioRecorder(
         }
     }
 
-    private suspend fun runRecordingLoop(bufferSize: Int) {
+    /**
+     * Dedicated tight microphone capture loop.
+     * ZERO pause between segments — PCM-to-WAV conversion and WorkManager dispatch
+     * are offloaded asynchronously to finalizerScope without blocking AudioRecord reads.
+     */
+    private suspend fun runContinuousCaptureLoop(bufferSize: Int) {
         val readBuffer = ShortArray(bufferSize / 2)
         val byteBuffer = ByteArray(bufferSize)
+        val targetSampleCount = Constants.SAMPLE_RATE_HZ.toLong() * segmentDurationSeconds
 
-        while (coroutineScope.isActive && _isRecording.value) {
-            val segmentStartTime = System.currentTimeMillis()
-            val tempPcmFile = File(FileUtils.getAudioSegmentsDirectory(context), "temp_conv_${conversationId}_seg_${currentSegmentNumber}.pcm")
-            val targetWavFile = FileUtils.createSegmentAudioFile(context, conversationId, currentSegmentNumber)
-            
-            var pcmOutputStream: FileOutputStream? = null
-            try {
-                pcmOutputStream = FileOutputStream(tempPcmFile)
-                val targetSampleCount = Constants.SAMPLE_RATE_HZ.toLong() * segmentDurationSeconds
-                var totalSamplesWritten = 0L
+        var currentPcmStream: FileOutputStream? = null
+        var currentTempPcmFile: File? = null
+        var currentTargetWavFile: File? = null
+        var segmentStartTime = System.currentTimeMillis()
+        var samplesWrittenInSegment = 0L
 
-                while (coroutineScope.isActive && _isRecording.value && totalSamplesWritten < targetSampleCount) {
-                    val shortsRead = audioRecord?.read(readBuffer, 0, readBuffer.size) ?: -1
-                    if (shortsRead > 0) {
-                        // Calculate RMS amplitude for visualizer
-                        var sum = 0.0
-                        for (i in 0 until shortsRead) {
-                            val sample = readBuffer[i]
-                            // Convert Short to 16-bit Little Endian bytes
-                            byteBuffer[i * 2] = (sample.toInt() and 0xFF).toByte()
-                            byteBuffer[i * 2 + 1] = ((sample.toInt() shr 8) and 0xFF).toByte()
-                            sum += sample * sample
-                        }
-                        val rms = sqrt(sum / shortsRead).toFloat()
-                        val normalizedAmp = (rms / 32767f).coerceIn(0f, 1f)
-                        _audioAmplitude.emit(normalizedAmp)
+        fun openNewSegmentStream(segNum: Int) {
+            val tempFile = File(FileUtils.getAudioSegmentsDirectory(context), "temp_conv_${conversationId}_seg_${segNum}.pcm")
+            val targetWav = FileUtils.createSegmentAudioFile(context, conversationId, segNum)
+            currentTempPcmFile = tempFile
+            currentTargetWavFile = targetWav
+            currentPcmStream = FileOutputStream(tempFile)
+            segmentStartTime = System.currentTimeMillis()
+            samplesWrittenInSegment = 0L
+        }
 
-                        pcmOutputStream.write(byteBuffer, 0, shortsRead * 2)
-                        totalSamplesWritten += shortsRead
-                    } else if (shortsRead == AudioRecord.ERROR_INVALID_OPERATION || shortsRead == AudioRecord.ERROR_BAD_VALUE) {
-                        segmentListener?.onRecordingError("AudioRecord read error ($shortsRead)")
-                        break
-                    }
-                }
-
-                pcmOutputStream.flush()
-                pcmOutputStream.close()
-                pcmOutputStream = null
-
-                val segmentEndTime = System.currentTimeMillis()
-
-                if (tempPcmFile.exists() && tempPcmFile.length() > 0) {
-                    // Convert PCM to WAV
-                    FileUtils.convertPcmToWav(tempPcmFile, targetWavFile)
-                    val segNum = currentSegmentNumber
-                    currentSegmentNumber++
-                    // Notify listener immediately while next loop iteration continues recording!
-                    segmentListener?.onSegmentCompleted(segNum, targetWavFile, segmentStartTime, segmentEndTime)
-                }
-            } catch (e: Exception) {
-                segmentListener?.onRecordingError("Recording stream error: ${e.message}")
-            } finally {
+        fun dispatchCurrentSegment(segNum: Int, tempFile: File, targetWav: File, startTime: Long, endTime: Long) {
+            finalizerScope.launch {
                 try {
-                    pcmOutputStream?.close()
-                } catch (_: IOException) {}
+                    if (tempFile.exists() && tempFile.length() > 0) {
+                        FileUtils.convertPcmToWav(tempFile, targetWav)
+                        segmentListener?.onSegmentCompleted(segNum, targetWav, startTime, endTime)
+                    }
+                } catch (e: Exception) {
+                    segmentListener?.onRecordingError("Error finalizing segment $segNum: ${e.message}")
+                }
             }
+        }
+
+        try {
+            openNewSegmentStream(currentSegmentNumber)
+
+            while (captureScope.isActive && _isRecording.value) {
+                val shortsRead = audioRecord?.read(readBuffer, 0, readBuffer.size) ?: -1
+
+                if (shortsRead > 0) {
+                    // 1. Calculate RMS amplitude for real-time visualizer
+                    var sum = 0.0
+                    for (i in 0 until shortsRead) {
+                        val sample = readBuffer[i]
+                        byteBuffer[i * 2] = (sample.toInt() and 0xFF).toByte()
+                        byteBuffer[i * 2 + 1] = ((sample.toInt() shr 8) and 0xFF).toByte()
+                        sum += sample * sample
+                    }
+                    val rms = sqrt(sum / shortsRead).toFloat()
+                    val normalizedAmp = (rms / 32767f).coerceIn(0f, 1f)
+                    _audioAmplitude.emit(normalizedAmp)
+
+                    // 2. Determine boundary split across segments if necessary
+                    val remainingInSegment = targetSampleCount - samplesWrittenInSegment
+
+                    if (shortsRead < remainingInSegment) {
+                        // Entire buffer fits within the current segment
+                        currentPcmStream?.write(byteBuffer, 0, shortsRead * 2)
+                        samplesWrittenInSegment += shortsRead
+                    } else {
+                        // Buffer crosses or meets the segment boundary
+                        val samplesForCurrent = remainingInSegment.toInt()
+                        val bytesForCurrent = samplesForCurrent * 2
+
+                        // Write samples belonging to current segment
+                        if (bytesForCurrent > 0) {
+                            currentPcmStream?.write(byteBuffer, 0, bytesForCurrent)
+                        }
+
+                        // Finalize current segment immediately and non-blockingly
+                        currentPcmStream?.flush()
+                        currentPcmStream?.close()
+                        val finalizedSegNum = currentSegmentNumber
+                        val finalizedTempFile = currentTempPcmFile
+                        val finalizedTargetWav = currentTargetWavFile
+                        val segmentEndTime = System.currentTimeMillis()
+
+                        if (finalizedTempFile != null && finalizedTargetWav != null) {
+                            dispatchCurrentSegment(
+                                finalizedSegNum,
+                                finalizedTempFile,
+                                finalizedTargetWav,
+                                segmentStartTime,
+                                segmentEndTime
+                            )
+                        }
+
+                        // Immediately advance to next segment and start writing remainder without dropping samples!
+                        currentSegmentNumber++
+                        openNewSegmentStream(currentSegmentNumber)
+
+                        val remainderSamples = shortsRead - samplesForCurrent
+                        val remainderBytes = remainderSamples * 2
+                        if (remainderBytes > 0) {
+                            currentPcmStream?.write(byteBuffer, bytesForCurrent, remainderBytes)
+                            samplesWrittenInSegment += remainderSamples
+                        }
+                    }
+                } else if (shortsRead == AudioRecord.ERROR_INVALID_OPERATION || shortsRead == AudioRecord.ERROR_BAD_VALUE) {
+                    segmentListener?.onRecordingError("AudioRecord read error ($shortsRead)")
+                    break
+                }
+            }
+        } catch (e: Exception) {
+            segmentListener?.onRecordingError("Continuous recording stream error: ${e.message}")
+        } finally {
+            try {
+                currentPcmStream?.flush()
+                currentPcmStream?.close()
+                // If there's an active in-flight segment with data on stop, finalize it
+                val lastTemp = currentTempPcmFile
+                val lastWav = currentTargetWavFile
+                if (lastTemp != null && lastWav != null && lastTemp.exists() && lastTemp.length() > 0) {
+                    dispatchCurrentSegment(
+                        currentSegmentNumber,
+                        lastTemp,
+                        lastWav,
+                        segmentStartTime,
+                        System.currentTimeMillis()
+                    )
+                }
+            } catch (_: IOException) {}
         }
     }
 
