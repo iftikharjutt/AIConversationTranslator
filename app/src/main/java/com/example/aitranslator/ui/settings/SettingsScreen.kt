@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.aitranslator.util.Constants
+import com.example.aitranslator.util.GeminiModelOption
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -297,7 +298,11 @@ fun SettingsScreen(
 
                     if (showModelDialog) {
                         var customModelInput by remember { mutableStateOf("") }
-                        var isCustomSelected by remember { mutableStateOf(Constants.GEMINI_MODELS.none { it.id == state.geminiModel }) }
+                        var accountModels by remember { mutableStateOf<List<GeminiModelOption>?>(null) }
+                        var isFetchingModels by remember { mutableStateOf(false) }
+                        var fetchStatusMessage by remember { mutableStateOf<String?>(null) }
+
+                        val displayedModels = accountModels ?: Constants.GEMINI_MODELS
 
                         AlertDialog(
                             onDismissRequest = { showModelDialog = false },
@@ -308,7 +313,38 @@ fun SettingsScreen(
                                         .fillMaxWidth()
                                         .verticalScroll(rememberScrollState())
                                 ) {
-                                    Constants.GEMINI_MODELS.forEach { modelOpt ->
+                                    if (state.geminiApiKey.isNotBlank()) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                isFetchingModels = true
+                                                fetchStatusMessage = "Checking your Google account for eligible models..."
+                                                viewModel.fetchEligibleModels(state.geminiApiKey) { list, error ->
+                                                    isFetchingModels = false
+                                                    if (list != null && list.isNotEmpty()) {
+                                                        accountModels = list
+                                                        fetchStatusMessage = "✅ Loaded ${list.size} eligible models from your Google account!"
+                                                    } else {
+                                                        fetchStatusMessage = "⚠️ " + (error ?: "Could not query models list")
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = !isFetchingModels
+                                        ) {
+                                            Text(if (isFetchingModels) "Checking Account..." else "🔄 Check My Account for Eligible Models", fontSize = 13.sp)
+                                        }
+                                        if (fetchStatusMessage != null) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = fetchStatusMessage!!,
+                                                fontSize = 11.sp,
+                                                color = if (fetchStatusMessage?.startsWith("✅") == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                    }
+
+                                    displayedModels.forEach { modelOpt ->
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -348,7 +384,7 @@ fun SettingsScreen(
                                     OutlinedTextField(
                                         value = customModelInput,
                                         onValueChange = { customModelInput = it },
-                                        placeholder = { Text("e.g. gemini-3.7-flash") },
+                                        placeholder = { Text("e.g. gemini-2.5-flash") },
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth()
                                     )

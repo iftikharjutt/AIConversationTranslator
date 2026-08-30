@@ -101,3 +101,17 @@ data class GeminiTranslationResult(
     val translation: String = ""
 )
 
+@Serializable
+data class GeminiListModelsResponse(
+    val models: List<GeminiModelItem>? = null,
+    val nextPageToken: String? = null
+)
+
+@Serializable
+data class GeminiModelItem(
+    val name: String, // e.g. "models/gemini-2.5-flash"
+    val displayName: String? = null,
+    val description: String? = null,
+    val supportedGenerationMethods: List<String>? = null
+)
+

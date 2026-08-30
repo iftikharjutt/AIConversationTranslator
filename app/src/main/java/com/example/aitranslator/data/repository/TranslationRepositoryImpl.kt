@@ -244,6 +244,41 @@ class TranslationRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun fetchEligibleModels(apiKey: String): Result<List<com.example.aitranslator.util.GeminiModelOption>> {
+        return try {
+            val response = geminiApi.listModels(apiKey = apiKey)
+            if (response.isSuccessful && response.body() != null) {
+                val rawModels = response.body()?.models.orEmpty()
+                // Filter only models that support generateContent
+                val eligible = rawModels.filter { model ->
+                    val methods = model.supportedGenerationMethods ?: emptyList()
+                    methods.contains("generateContent")
+                }.map { model ->
+                    val cleanId = model.name.removePrefix("models/")
+                    val isRec = cleanId.contains("2.5-flash") || cleanId.contains("flash") && !cleanId.contains("lite") && !cleanId.contains("8b")
+                    com.example.aitranslator.util.GeminiModelOption(
+                        id = cleanId,
+                        name = model.displayName ?: cleanId,
+                        description = model.description ?: "Supports audio & text translation",
+                        isRecommended = isRec
+                    )
+                }.sortedWith(compareByDescending<com.example.aitranslator.util.GeminiModelOption> { it.isRecommended }
+                    .thenByDescending { it.id })
+                
+                if (eligible.isNotEmpty()) {
+                    Result.success(eligible)
+                } else {
+                    Result.success(Constants.GEMINI_MODELS)
+                }
+            } else {
+                val errorBody = response.errorBody()?.string() ?: "HTTP ${response.code()}"
+                Result.failure(Exception("Failed to fetch models (${response.code()}): $errorBody"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private fun cleanJsonString(raw: String): String {
         var text = raw.trim()
         if (text.startsWith("```json")) {

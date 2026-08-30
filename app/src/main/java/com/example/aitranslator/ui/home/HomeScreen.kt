@@ -33,6 +33,7 @@ import com.example.aitranslator.domain.model.Conversation
 import com.example.aitranslator.domain.model.Language
 import com.example.aitranslator.ui.recording.SegmentCard
 import com.example.aitranslator.util.Constants
+import com.example.aitranslator.util.GeminiModelOption
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -521,6 +522,9 @@ fun HomeScreen(
             },
             onTest = { key, model, callback ->
                 viewModel.testGeminiApiKey(key, model, callback)
+            },
+            onFetchModels = { key, callback ->
+                viewModel.fetchEligibleModels(key, callback)
             }
         )
     }
@@ -556,13 +560,19 @@ fun GeminiApiKeyDialog(
     currentModel: String,
     onDismiss: () -> Unit,
     onSave: (String, String) -> Unit,
-    onTest: (String, String, (Boolean, String) -> Unit) -> Unit
+    onTest: (String, String, (Boolean, String) -> Unit) -> Unit,
+    onFetchModels: (String, (List<GeminiModelOption>?, String?) -> Unit) -> Unit
 ) {
     var apiKeyInput by remember { mutableStateOf(currentKey) }
     var selectedModel by remember { mutableStateOf(if (currentModel.isNotBlank()) currentModel else Constants.GEMINI_DEFAULT_MODEL) }
     var customModelInput by remember { mutableStateOf("") }
+    var accountModels by remember { mutableStateOf<List<GeminiModelOption>?>(null) }
+    var isFetchingModels by remember { mutableStateOf(false) }
+    var fetchStatusMessage by remember { mutableStateOf<String?>(null) }
     var testResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var isTesting by remember { mutableStateOf(false) }
+
+    val displayedModels = accountModels ?: Constants.GEMINI_MODELS
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -592,6 +602,7 @@ fun GeminiApiKeyDialog(
                     onValueChange = {
                         apiKeyInput = it
                         testResult = null
+                        fetchStatusMessage = null
                     },
                     label = { Text("Gemini API Key") },
                     placeholder = { Text("AIzaSy...") },
@@ -599,11 +610,42 @@ fun GeminiApiKeyDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                if (apiKeyInput.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            isFetchingModels = true
+                            fetchStatusMessage = "Checking your Google account for eligible models..."
+                            onFetchModels(apiKeyInput.trim()) { list, error ->
+                                isFetchingModels = false
+                                if (list != null && list.isNotEmpty()) {
+                                    accountModels = list
+                                    fetchStatusMessage = "✅ Loaded ${list.size} eligible models from your Google account!"
+                                } else {
+                                    fetchStatusMessage = "⚠️ " + (error ?: "Could not query models list")
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isFetchingModels
+                    ) {
+                        Text(if (isFetchingModels) "Checking Account..." else "🔄 Check My Account for Eligible Models", fontSize = 12.sp)
+                    }
+                    if (fetchStatusMessage != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = fetchStatusMessage!!,
+                            fontSize = 11.sp,
+                            color = if (fetchStatusMessage?.startsWith("✅") == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Select Model:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 Spacer(modifier = Modifier.height(4.dp))
 
-                Constants.GEMINI_MODELS.forEach { modelOpt ->
+                displayedModels.forEach { modelOpt ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

@@ -34,6 +34,7 @@ interface TranslationRepository {
     ): Result<Pair<String, String>>
 
     suspend fun testGeminiApiKey(apiKey: String, model: String): Result<String>
+    suspend fun fetchEligibleModels(apiKey: String): Result<List<com.example.aitranslator.util.GeminiModelOption>>
 
     suspend fun transcribeAudio(audioFile: File, languageCode: String): Result<String>
     suspend fun translateText(text: String, sourceLanguage: String, targetLanguage: String, context: String?): Result<String>

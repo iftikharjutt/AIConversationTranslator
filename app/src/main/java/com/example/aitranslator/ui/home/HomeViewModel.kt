@@ -236,6 +236,17 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun fetchEligibleModels(apiKey: String, onResult: (List<com.example.aitranslator.util.GeminiModelOption>?, String?) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.fetchEligibleModels(apiKey)
+            if (result.isSuccess) {
+                onResult(result.getOrNull(), null)
+            } else {
+                onResult(null, result.exceptionOrNull()?.message ?: "Failed to query account models")
+            }
+        }
+    }
+
     fun getAudioAmplitudeFlow() = segmentManager.getAudioAmplitudeFlow()
 }
 
