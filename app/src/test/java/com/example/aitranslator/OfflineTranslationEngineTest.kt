@@ -2,16 +2,17 @@ package com.example.aitranslator
 
 import com.example.aitranslator.data.local.OfflineModelDao
 import com.example.aitranslator.data.local.OfflineModelEntity
-import com.example.aitranslator.domain.model.ModelManifest
 import com.example.aitranslator.domain.model.OfflineModelStatus
 import com.example.aitranslator.domain.model.TranslationEngineType
 import com.example.aitranslator.domain.model.TranslationMode
 import com.example.aitranslator.offline.ModelScanner
 import com.example.aitranslator.offline.OfflineGlossary
 import com.example.aitranslator.offline.OfflineTranslationEngine
+import com.example.aitranslator.offline.nllb.NllbGenerationConfig
+import com.example.aitranslator.offline.nllb.NllbOnnxTranslationEngine
+import com.example.aitranslator.offline.nllb.NllbTokenizer
 import io.mockk.coEvery
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.junit.Assert.*
@@ -29,24 +30,49 @@ class OfflineTranslationEngineTest {
     private val offlineModelDao = mockk<OfflineModelDao>(relaxed = true)
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private lateinit var modelScanner: ModelScanner
+    private lateinit var nllbEngine: NllbOnnxTranslationEngine
     private lateinit var offlineEngine: OfflineTranslationEngine
 
     @Before
     fun setUp() {
         val mockContext = mockk<android.content.Context>(relaxed = true)
         modelScanner = ModelScanner(mockContext, offlineModelDao, json)
-        offlineEngine = OfflineTranslationEngine(offlineModelDao, modelScanner)
+        nllbEngine = NllbOnnxTranslationEngine()
+        offlineEngine = OfflineTranslationEngine(offlineModelDao, modelScanner, nllbEngine)
     }
 
     @Test
-    fun testLanguageCodeMappingToFlores200() {
-        assertEquals("zsm_Latn", offlineEngine.mapLanguageToFloresCode("ms"))
-        assertEquals("zsm_Latn", offlineEngine.mapLanguageToFloresCode("zsm"))
-        assertEquals("zsm_Latn", offlineEngine.mapLanguageToFloresCode("Malay"))
-        assertEquals("urd_Arab", offlineEngine.mapLanguageToFloresCode("ur"))
-        assertEquals("urd_Arab", offlineEngine.mapLanguageToFloresCode("urd"))
-        assertEquals("urd_Arab", offlineEngine.mapLanguageToFloresCode("Urdu"))
-        assertEquals("eng_Latn", offlineEngine.mapLanguageToFloresCode("en"))
+    fun testNllbTokenizerLanguageTokenIds() {
+        val tokenizer = NllbTokenizer()
+        assertEquals(NllbTokenizer.MALAY_TOKEN_ID, tokenizer.getLanguageTokenId("ms"))
+        assertEquals(NllbTokenizer.MALAY_TOKEN_ID, tokenizer.getLanguageTokenId("zsm_Latn"))
+        assertEquals(NllbTokenizer.URDU_TOKEN_ID, tokenizer.getLanguageTokenId("ur"))
+        assertEquals(NllbTokenizer.URDU_TOKEN_ID, tokenizer.getLanguageTokenId("urd_Arab"))
+        assertEquals(NllbTokenizer.ENGLISH_TOKEN_ID, tokenizer.getLanguageTokenId("en"))
+    }
+
+    @Test
+    fun testNllbTokenizerEncodeAndDecode() {
+        val tokenizer = NllbTokenizer()
+        val tokens = tokenizer.encode("Apa khabar?", "ms")
+        assertTrue(tokens.isNotEmpty())
+        assertEquals(NllbTokenizer.EOS_TOKEN_ID, tokens[tokens.size - 2])
+        assertEquals(NllbTokenizer.MALAY_TOKEN_ID, tokens.last())
+
+        val prompt = tokenizer.buildDecoderPrompt("ur")
+        assertEquals(2, prompt.size)
+        assertEquals(NllbTokenizer.EOS_TOKEN_ID, prompt[0])
+        assertEquals(NllbTokenizer.URDU_TOKEN_ID, prompt[1])
+    }
+
+    @Test
+    fun testNllbGenerationConfigDefaults() {
+        val config = NllbGenerationConfig()
+        assertEquals(128, config.maxOutputTokens)
+        assertEquals(2L, config.eosTokenId)
+        assertEquals(0.0f, config.temperature, 0.001f)
+        assertEquals(256125L, config.sourceLangTokenId)
+        assertEquals(256190L, config.targetLangTokenId)
     }
 
     @Test
@@ -197,7 +223,7 @@ class OfflineTranslationEngineTest {
 
         val sha256 = modelScanner.calculateSha256(sampleFile)
         assertNotNull(sha256)
-        assertEquals(64, sha256.length) // SHA-256 is 64 hex characters
+        assertEquals(64, sha256.length)
     }
 
     @Test

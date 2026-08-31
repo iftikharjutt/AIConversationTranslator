@@ -22,10 +22,10 @@ androidxJunit = "1.2.1"
 espresso = "3.6.1"
 mockk = "1.13.12"
 turbine = "1.1.0"
-onnxruntime = "1.19.2"
-sentencepiece4j = "1.0.2"
+onnxruntime = "1.18.0"
 
 [libraries]
+onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle.runtime.ktx", version.ref = "lifecycle" }

@@ -27,16 +27,22 @@ class ModelScanner @Inject constructor(
     fun getPrimaryModelsDirectory(): File {
         try {
             val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val appFolder = File(publicDownloads, "AIConversationTranslator/models")
-            if (appFolder.exists() || appFolder.mkdirs()) {
-                val testFile = File(appFolder, ".test_write")
-                if (testFile.createNewFile()) {
-                    testFile.delete()
-                    return appFolder
+            if (publicDownloads != null) {
+                val appFolder = File(publicDownloads, "AIConversationTranslator/models")
+                if (appFolder.exists() || appFolder.mkdirs()) {
+                    val testFile = File(appFolder, ".test_write")
+                    if (testFile.createNewFile()) {
+                        testFile.delete()
+                        return appFolder
+                    }
                 }
             }
         } catch (_: Exception) {}
-        val appPrivate = context.getExternalFilesDir("models") ?: File(context.filesDir, "models")
+        val appPrivate = try {
+            context.getExternalFilesDir("models") ?: (context.filesDir?.let { File(it, "models") }) ?: File("models")
+        } catch (_: Exception) {
+            File("models")
+        }
         appPrivate.mkdirs()
         return appPrivate
     }
