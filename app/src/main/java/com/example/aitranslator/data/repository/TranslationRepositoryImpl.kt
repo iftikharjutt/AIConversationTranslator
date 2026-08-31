@@ -202,35 +202,7 @@ class TranslationRepositoryImpl @Inject constructor(
                 return Result.failure(IllegalStateException("Audio file does not exist or is empty: ${audioFile.absolutePath}"))
             }
 
-            val sourceLangObj = Language.getByCode(sourceLanguage)
-            val targetLangObj = Language.getByCode(targetLanguage)
-            val sourceLangName = "${sourceLangObj.name} (${sourceLangObj.code})"
-            val targetLangName = "${targetLangObj.name} (${targetLangObj.code})"
-
-            val prompt = buildString {
-                appendLine("You are a professional real-time conversational translator.")
-                appendLine("Transcribe the spoken audio accurately in the source language ($sourceLangName).")
-                appendLine("Then translate the meaning naturally and faithfully into the target language ($targetLangName).")
-                appendLine()
-                appendLine("Requirements:")
-                appendLine("- Preserve meaning accurately and naturally for everyday spoken conversation.")
-                appendLine("- Preserve names, places, numbers, dates, and important terminology.")
-                appendLine("- Do not invent information, hallucinate, add explanations, or summarize.")
-                appendLine("- Correct obvious acoustic speech-recognition slips when context makes intended meaning clear.")
-                appendLine("- Handle incomplete spoken sentences naturally.")
-                appendLine("- When conversation context is provided below, use it to resolve ambiguous words, pronouns, and references.")
-                if (!context.isNullOrBlank()) {
-                    appendLine()
-                    appendLine("Recent conversation context:")
-                    appendLine(context)
-                }
-                appendLine()
-                appendLine("Return the output STRICTLY as a JSON object with this exact schema:")
-                appendLine("{")
-                appendLine("  \"transcript\": \"<exact transcribed speech in source language>\",")
-                appendLine("  \"translation\": \"<fluent natural translation in target language>\"")
-                appendLine("}")
-            }
+            val prompt = buildGeminiPrompt(sourceLanguage, targetLanguage, context)
 
             val audioBytes = audioFile.readBytes()
             val base64Audio = android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP)
@@ -405,6 +377,78 @@ class TranslationRepositoryImpl @Inject constructor(
             text = text.removeSuffix("```").trim()
         }
         return text.trim()
+    }
+
+    companion object {
+        fun buildGeminiPrompt(
+            sourceLanguage: String,
+            targetLanguage: String,
+            context: String?
+        ): String {
+            val sourceLangObj = Language.getByCode(sourceLanguage)
+            val targetLangObj = Language.getByCode(targetLanguage)
+            val sourceLangName = "${sourceLangObj.name} (${sourceLangObj.code})"
+            val targetLangName = "${targetLangObj.name} (${targetLangObj.code})"
+
+            return buildString {
+                appendLine("You are a professional real-time conversational voice interpreter and translator.")
+                appendLine("Transcribe the spoken audio accurately in the source language ($sourceLangName).")
+                appendLine("Then translate the meaning naturally and faithfully into the target language ($targetLangName).")
+                appendLine()
+                appendLine("CORE TRANSLATION & SPEECH GUIDELINES:")
+                appendLine("1. CONVERSATIONAL SPOKEN MALAY:")
+                appendLine("   - Spoken Malay frequently contains colloquial contractions and discourse particles: 'dah' (sudah), 'tak' (tidak), 'nak' (hendak), 'kat' (dekat/di), 'ni' (ini), 'tu' (itu), 'camne' (macam mana), 'camtu' (macam itu), 'bape' (berapa), 'jap' (sekejap), and particles like 'lah', 'kan', 'jom', 'pun', 'kot'.")
+                appendLine("   - Treat these as normal spoken/colloquial Malay and translate their intended conversational meaning naturally.")
+                appendLine()
+                appendLine("2. MALAY → URDU TRANSLATION:")
+                appendLine("   - Prefer natural, idiomatic spoken Urdu rather than stiff, overly literal, or bureaucratic phrasing.")
+                appendLine("   - Default to respectful, polite conversational Urdu using 'آپ' (Aap) and respectful verb agreements where appropriate.")
+                appendLine("   - Avoid unnatural word-for-word literal translations.")
+                appendLine()
+                appendLine("3. URDU → MALAY TRANSLATION:")
+                appendLine("   - Preserve the speaker's politeness, warmth, and social register.")
+                appendLine("   - Prefer natural Malaysian conversational Malay.")
+                appendLine("   - Use contextually appropriate terms of address and pronouns (such as 'awak', 'encik', 'abang', 'kakak') only when the context supports them; do not blindly map every 'آپ' to a single rigid pronoun.")
+                appendLine()
+                appendLine("4. ISLAMIC & RELIGIOUS TERMINOLOGY:")
+                appendLine("   - Provide natural contextual translations for shared Islamic concepts:")
+                appendLine("     * Malay 'solat' → Urdu 'نماز' (Namaz)")
+                appendLine("     * Malay 'puasa' → Urdu 'روزہ' (Roza)")
+                appendLine("     * Malay 'surau' → Urdu 'مسجد' / 'نماز کی جگہ' (according to context)")
+                appendLine("     * Malay 'Hari Raya Aidilfitri' → Urdu 'عید الفطر' (Eid-ul-Fitr)")
+                appendLine("   - Preserve standard Arabic Islamic expressions naturally (e.g., 'InshaAllah', 'Alhamdulillah', 'SubhanAllah', 'JazakAllah') without awkward literal translations.")
+                appendLine("   - Do not force rigid dictionary replacements if the conversational context demands an alternative meaning.")
+                appendLine()
+                appendLine("5. NAMES & PROPER NOUNS:")
+                appendLine("   - NEVER translate personal names or surnames as dictionary words.")
+                appendLine("   - Transliterate people's names, places, organizations, and important entities phonetically and naturally into the target script.")
+                appendLine()
+                appendLine("6. NUMBERS, CURRENCY & DATES:")
+                appendLine("   - NEVER perform currency conversions. For example, 'Sepuluh ringgit' must remain '10 ringgit' or 'RM10' in Urdu (never convert to Pakistani Rupees or other currencies).")
+                appendLine("   - Preserve all numerical values, dates, and amounts exactly.")
+                appendLine()
+                appendLine("7. ACCURACY & CONVERSATIONAL ROBUSTNESS:")
+                appendLine("   - Do not invent information, hallucinate facts, add explanatory commentary, or summarize.")
+                appendLine("   - Correct obvious acoustic slips or stuttering when context clarifies the intended meaning.")
+                appendLine("   - Handle pauses and incomplete spoken sentences gracefully without creating false statements.")
+                appendLine()
+                if (!context.isNullOrBlank()) {
+                    appendLine("8. CHRONOLOGICAL CONVERSATION CONTEXT:")
+                    appendLine("   The following segments represent the preceding chronological conversation history from prior turns:")
+                    appendLine("   --- BEGIN CONTEXT ---")
+                    appendLine(context)
+                    appendLine("   --- END CONTEXT ---")
+                    appendLine("   Use this history strictly to resolve pronouns, names, and ambiguous references. Do NOT invent missing context or repeat prior sentences unless spoken again.")
+                    appendLine()
+                }
+                appendLine("OUTPUT FORMAT:")
+                appendLine("Return the result STRICTLY as a JSON object with this exact schema:")
+                appendLine("{")
+                appendLine("  \"transcript\": \"<exact transcribed speech in source language>\",")
+                appendLine("  \"translation\": \"<fluent natural translation in target language>\"")
+                appendLine("}")
+            }
+        }
     }
 }
 

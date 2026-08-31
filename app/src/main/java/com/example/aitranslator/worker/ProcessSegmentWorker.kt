@@ -150,9 +150,36 @@ class ProcessSegmentWorker @AssistedInject constructor(
         }
     }
 
-    private fun isTransientError(throwable: Throwable?): Boolean {
-        return throwable is IOException ||
-                throwable?.message?.contains("timeout", ignoreCase = true) == true ||
-                throwable?.message?.contains("connect", ignoreCase = true) == true
+    companion object {
+        fun isTransientError(throwable: Throwable?): Boolean {
+            if (throwable == null) return false
+
+            val message = throwable.message.orEmpty().lowercase()
+
+            // Non-transient permanent errors (never retry)
+            if (message.contains("401") ||
+                message.contains("403") ||
+                message.contains("invalid") && message.contains("key") ||
+                message.contains("unauthorized") ||
+                message.contains("forbidden") ||
+                message.contains("404") ||
+                throwable is IllegalArgumentException
+            ) {
+                return false
+            }
+
+            // Transient retryable errors (HTTP 429, rate-limits, server downtime, socket/network timeouts)
+            return throwable is IOException ||
+                    message.contains("429") ||
+                    message.contains("rate limit") ||
+                    message.contains("quota") ||
+                    message.contains("too many requests") ||
+                    message.contains("500") ||
+                    message.contains("503") ||
+                    message.contains("timeout") ||
+                    message.contains("connect") ||
+                    message.contains("socket") ||
+                    message.contains("reset")
+        }
     }
 }
