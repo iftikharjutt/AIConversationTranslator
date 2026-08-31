@@ -17,6 +17,7 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -37,43 +38,57 @@ class ModelDownloadManager @Inject constructor(
     private val scope=CoroutineScope(Dispatchers.IO+SupervisorJob())
     private val base="https://huggingface.co/venddair/nllb-200-distilled-600M-onnx/resolve/main"
     private val files=listOf("encoder_model_int8.onnx","decoder_model_int8.onnx","sentencepiece.bpe.model","config.json","generation_config.json","special_tokens_map.json","tokenizer_config.json")
+    private val expectedBytes=1_150_000_000L
 
     fun startDownload(model:OfflineModel){
-        if(downloadJob?.isActive==true)return
+        if(downloadJob?.isActive==true){
+            _downloadState.value=_downloadState.value.copy(message="Download is already running")
+            return
+        }
         downloadJob=scope.launch {
             try{
-                val dir=File(modelScanner.getPrimaryModelsDirectory(),"malay-urdu").apply{mkdirs()}
-                _downloadState.value=DownloadProgress(model.modelId,DownloadStatus.PREPARING,0,0,0,"Preparing download in ${dir.absolutePath}")
+                // Always use app-private external storage. This avoids Android scoped-storage
+                // restrictions that can silently block writes to public Downloads on newer Android.
+                val root=context.getExternalFilesDir("models") ?: File(context.filesDir,"models")
+                val dir=File(root,"malay-urdu").apply{mkdirs()}
+                if(!dir.isDirectory || !dir.canWrite()) error("Cannot write to app model storage: ${dir.absolutePath}")
+                _downloadState.value=DownloadProgress(model.modelId,DownloadStatus.PREPARING,0,0,expectedBytes,"Connecting to model server...")
+
                 val stat=StatFs(dir.absolutePath)
                 val free=stat.availableBlocksLong*stat.blockSizeLong
-                if(free<1_300_000_000L) error("Only ${free/1024/1024} MB free. At least 1300 MB is required for the model.")
+                if(free < expectedBytes + 50_000_000L) error("Not enough storage. Need about 1.15 GB for the model; only ${free/1024/1024} MB is available.")
+
+                // Fail fast with a useful error before starting a 1+ GB download.
+                val probe=okHttpClient.newCall(Request.Builder().url("$base/config.json?download=true").head().build()).execute()
+                probe.use { if(!it.isSuccessful) error("Model server returned HTTP ${it.code}. Please check your internet connection.") }
+
                 val infos=mutableListOf<ModelFileInfo>()
                 files.forEachIndexed{index,name->
                     ensureActive()
                     val f=File(dir,name)
-                    val r=download("$base/$name",f,model.modelId,index,files.size)
+                    val r=download("$base/$name?download=true",f,model.modelId,index,files.size)
                     infos+=ModelFileInfo(name,r.first,r.second)
                 }
-                _downloadState.value=DownloadProgress(model.modelId,DownloadStatus.VERIFYING,99,infos.sumOf{it.size},infos.sumOf{it.size},"Preparing model manifest...")
+                _downloadState.value=DownloadProgress(model.modelId,DownloadStatus.VERIFYING,99,infos.sumOf{it.size},infos.sumOf{it.size},"Creating model manifest...")
                 val manifest=ModelManifest("nllb-200-distilled-600m-int8","NLLB-200 Distilled 600M INT8 — Malay ↔ Urdu","1.0.0",listOf("msa_Latn","urd_Arab"),infos,infos.sumOf{it.size},"","CC-BY-NC-4.0 (see upstream model card)","https://huggingface.co/venddair/nllb-200-distilled-600M-onnx",System.currentTimeMillis(),"onnx-int8")
                 File(dir,"manifest.json").writeText(json.encodeToString(manifest))
                 offlineModelDao.insertModel(OfflineModelEntity.fromDomain(model.copy(modelId=manifest.modelId,modelName=manifest.modelName,localPath=dir.absolutePath,status=OfflineModelStatus.DOWNLOADED,totalSize=manifest.expectedSize,downloadedSize=manifest.expectedSize,supportedLanguages=manifest.supportedLanguages,license=manifest.license,sourceUrl=manifest.sourceUrl,runtime=manifest.runtime,lastVerifiedAt=0L)))
                 _downloadState.value=DownloadProgress(model.modelId,DownloadStatus.COMPLETED,100,manifest.expectedSize,manifest.expectedSize,"Download complete. Tap Verify Integrity before use.")
             }catch(e:CancellationException){_downloadState.value=_downloadState.value.copy(status=DownloadStatus.CANCELLED,message="Download cancelled")}
-            catch(e:Exception){_downloadState.value=_downloadState.value.copy(status=DownloadStatus.FAILED,message="Download failed: ${e.message}")}
+            catch(e:Exception){_downloadState.value=_downloadState.value.copy(status=DownloadStatus.FAILED,message="Download failed: ${e.message ?: e.javaClass.simpleName}" )}
         }
     }
 
     private suspend fun download(url:String,file:File,id:String,index:Int,count:Int):Pair<Long,String> = withContext(Dispatchers.IO){
-        var offset=if(file.exists())file.length()else 0L
-        fun newCall(start:Long): okhttp3.Response = okHttpClient.newCall(Request.Builder().url(url).apply{if(start>0)header("Range","bytes=$start-")}.build()).execute()
-        var res=newCall(offset)
-        if(offset>0 && res.code!=206){res.close();offset=0L;file.delete();res=newCall(0L)}
+        var offset=if(file.isFile)file.length()else 0L
+        var res=call(url,offset)
+        // Some CDNs do not honor Range. In that case restart this individual file safely.
+        if(offset>0 && res.code!=206){res.close();offset=0L;file.delete();res=call(url,0L)}
         res.use{r->
             if(!r.isSuccessful)error("HTTP ${r.code} for ${file.name}")
             val body=r.body?:error("Empty response for ${file.name}")
             val append=offset>0 && r.code==206
-            if(!append) {offset=0L;file.delete()}
+            if(!append){offset=0L;file.delete()}
             val bodyLength=body.contentLength()
             val total=if(bodyLength>=0)bodyLength+offset else -1L
             FileOutputStream(file,append).use{o->body.byteStream().use{i->
@@ -86,9 +101,11 @@ class ModelDownloadManager @Inject constructor(
             }}
         }
         if(!file.isFile || file.length()==0L) error("${file.name} was not saved")
+        if(file.length()<1024 && file.extension=="onnx") error("${file.name} download is incomplete (${file.length()} bytes)")
         Pair(file.length(),sha256(file))
     }
 
+    private fun call(url:String,offset:Long):okhttp3.Response = okHttpClient.newCall(Request.Builder().url(url).apply{if(offset>0)header("Range","bytes=$offset-")}.build()).execute()
     private fun sha256(file:File):String{val d=MessageDigest.getInstance("SHA-256");file.inputStream().use{i->val b=ByteArray(1024*1024);while(true){val n=i.read(b);if(n<0)break;d.update(b,0,n)}};return d.digest().joinToString(""){ "%02x".format(it)}}
     fun pauseDownload(){downloadJob?.cancel();_downloadState.value=_downloadState.value.copy(status=DownloadStatus.PAUSED,message="Download paused. Press Download Model to resume.")}
     fun cancelDownload(){downloadJob?.cancel();_downloadState.value=DownloadProgress(status=DownloadStatus.CANCELLED,message="Download cancelled")}
