@@ -24,11 +24,18 @@ class ModelScanner @Inject constructor(
     private val json: Json
 ) {
     fun getPrimaryModelsDirectory(): File {
-        val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val appFolder = File(publicDownloads, "AIConversationTranslator/models")
-        if (appFolder.exists() || appFolder.mkdirs()) {
-            return appFolder
-        }
+        try {
+            val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val appFolder = File(publicDownloads, "AIConversationTranslator/models")
+            if (appFolder.exists() || appFolder.mkdirs()) {
+                val testFile = File(appFolder, ".test_write")
+                if (testFile.createNewFile()) {
+                    testFile.delete()
+                    return appFolder
+                }
+            }
+        } catch (_: Exception) {}
+
         val appPrivate = context.getExternalFilesDir("models") ?: File(context.filesDir, "models")
         appPrivate.mkdirs()
         return appPrivate
@@ -37,6 +44,22 @@ class ModelScanner @Inject constructor(
     suspend fun scanDirectory(modelsDir: File = getPrimaryModelsDirectory()): List<OfflineModel> = withContext(Dispatchers.IO) {
         val detected = mutableListOf<OfflineModel>()
 
+        // Check both public downloads and app private models directories
+        val candidateDirs = mutableListOf<File>()
+        try {
+            val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val pubDir = File(publicDownloads, "AIConversationTranslator/models")
+            if (pubDir.exists()) candidateDirs.add(pubDir)
+        } catch (_: Exception) {}
+
+        val appPrivate = context.getExternalFilesDir("models")
+        if (appPrivate != null && appPrivate.exists() && !candidateDirs.contains(appPrivate)) {
+            candidateDirs.add(appPrivate)
+        }
+        if (!candidateDirs.contains(modelsDir)) {
+            candidateDirs.add(modelsDir)
+        }
+
         // 1. Ensure default Malay <-> Urdu official model entry is registered in database
         val defaultModel = getDefaultMalayUrduModel(modelsDir)
         val existingEntity = offlineModelDao.getModelById(defaultModel.modelId)
@@ -44,47 +67,44 @@ class ModelScanner @Inject constructor(
             offlineModelDao.insertModel(OfflineModelEntity.fromDomain(defaultModel))
         }
 
-        if (!modelsDir.exists()) {
-            modelsDir.mkdirs()
-        }
+        for (baseDir in candidateDirs) {
+            if (!baseDir.exists()) continue
+            val subdirs = baseDir.listFiles { file -> file.isDirectory } ?: emptyArray()
 
-        val subdirs = modelsDir.listFiles { file -> file.isDirectory } ?: emptyArray()
+            for (dir in subdirs) {
+                val manifestFile = File(dir, "manifest.json")
+                if (manifestFile.exists() && manifestFile.length() > 0) {
+                    try {
+                        val manifestText = manifestFile.readText()
+                        val manifest = json.decodeFromString<ModelManifest>(manifestText)
+                        val status = evaluatePackageStatus(dir, manifest)
+                        val totalSize = calculateFolderSize(dir)
 
-        for (dir in subdirs) {
-            val manifestFile = File(dir, "manifest.json")
-            if (manifestFile.exists() && manifestFile.length() > 0) {
-                try {
-                    val manifestText = manifestFile.readText()
-                    val manifest = json.decodeFromString<ModelManifest>(manifestText)
-                    val status = evaluatePackageStatus(dir, manifest)
-                    val totalSize = calculateFolderSize(dir)
+                        val offlineModel = OfflineModel(
+                            modelId = manifest.modelId,
+                            modelName = manifest.modelName,
+                            version = manifest.version,
+                            localPath = dir.absolutePath,
+                            status = status,
+                            totalSize = if (manifest.expectedSize > 0) manifest.expectedSize else totalSize,
+                            downloadedSize = totalSize,
+                            sha256 = manifest.sha256,
+                            supportedLanguages = manifest.supportedLanguages,
+                            license = manifest.license,
+                            sourceUrl = manifest.sourceUrl,
+                            runtime = manifest.runtime,
+                            installedAt = if (manifest.createdAt > 0) manifest.createdAt else System.currentTimeMillis(),
+                            lastVerifiedAt = System.currentTimeMillis()
+                        )
 
-                    val offlineModel = OfflineModel(
-                        modelId = manifest.modelId,
-                        modelName = manifest.modelName,
-                        version = manifest.version,
-                        localPath = dir.absolutePath,
-                        status = status,
-                        totalSize = if (manifest.expectedSize > 0) manifest.expectedSize else totalSize,
-                        downloadedSize = totalSize,
-                        sha256 = manifest.sha256,
-                        supportedLanguages = manifest.supportedLanguages,
-                        license = manifest.license,
-                        sourceUrl = manifest.sourceUrl,
-                        runtime = manifest.runtime,
-                        installedAt = if (manifest.createdAt > 0) manifest.createdAt else System.currentTimeMillis(),
-                        lastVerifiedAt = System.currentTimeMillis()
-                    )
-
-                    offlineModelDao.insertModel(OfflineModelEntity.fromDomain(offlineModel))
-                    detected.add(offlineModel)
-                } catch (_: Exception) {
-                    // Invalid manifest JSON
+                        offlineModelDao.insertModel(OfflineModelEntity.fromDomain(offlineModel))
+                        detected.add(offlineModel)
+                    } catch (_: Exception) {
+                        // Invalid manifest JSON
+                    }
                 }
             }
         }
-
-        val allInDb = offlineModelDao.observeAllModels()
         detected
     }
 
