@@ -60,12 +60,10 @@ class ModelScanner @Inject constructor(
             candidateDirs.add(modelsDir)
         }
 
-        // 1. Ensure default Malay <-> Urdu official model entry is registered in database
+        // 1. Evaluate default Malay <-> Urdu official model entry
         val defaultModel = getDefaultMalayUrduModel(modelsDir)
-        val existingEntity = offlineModelDao.getModelById(defaultModel.modelId)
-        if (existingEntity == null) {
-            offlineModelDao.insertModel(OfflineModelEntity.fromDomain(defaultModel))
-        }
+        offlineModelDao.insertModel(OfflineModelEntity.fromDomain(defaultModel))
+        detected.add(defaultModel)
 
         for (baseDir in candidateDirs) {
             if (!baseDir.exists()) continue
@@ -98,7 +96,9 @@ class ModelScanner @Inject constructor(
                         )
 
                         offlineModelDao.insertModel(OfflineModelEntity.fromDomain(offlineModel))
-                        detected.add(offlineModel)
+                        if (detected.none { it.modelId == offlineModel.modelId }) {
+                            detected.add(offlineModel)
+                        }
                     } catch (_: Exception) {
                         // Invalid manifest JSON
                     }
