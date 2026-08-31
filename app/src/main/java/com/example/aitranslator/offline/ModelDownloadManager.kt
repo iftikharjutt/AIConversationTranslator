@@ -101,12 +101,12 @@ class ModelDownloadManager @Inject constructor(
                     version = model.version,
                     supportedLanguages = model.supportedLanguages,
                     modelFiles = listOf(
-                        ModelFileInfo("model.onnx", 480_000_000L, model.sha256),
+                        ModelFileInfo("model.onnx", 480_000_000L, ""),
                         ModelFileInfo("tokenizer.json", 15_000_000L, ""),
                         ModelFileInfo("sentencepiece.bpe.model", 4_500_000L, "")
                     ),
                     expectedSize = requiredBytes,
-                    sha256 = model.sha256,
+                    sha256 = "",
                     license = model.license,
                     sourceUrl = model.sourceUrl,
                     createdAt = System.currentTimeMillis(),

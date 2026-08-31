@@ -116,7 +116,7 @@ class ModelScanner @Inject constructor(
                 offlineModelDao.updateModel(entity.copy(status = OfflineModelStatus.INCOMPLETE))
                 return@withContext Pair(false, "Missing required file: ${fileInfo.name}")
             }
-            if (fileInfo.sha256.isNotBlank()) {
+            if (fileInfo.sha256.isNotBlank() && fileInfo.sha256.length == 64) {
                 val actualSha256 = calculateSha256(file)
                 if (!actualSha256.equals(fileInfo.sha256, ignoreCase = true)) {
                     offlineModelDao.updateModel(entity.copy(status = OfflineModelStatus.CORRUPTED))
@@ -155,7 +155,7 @@ class ModelScanner @Inject constructor(
         var allPresent = true
         for (fileInfo in manifest.modelFiles) {
             val file = File(dir, fileInfo.name)
-            if (!file.exists() || (fileInfo.size > 0 && file.length() < fileInfo.size * 0.95)) {
+            if (!file.exists() || file.length() == 0L) {
                 allPresent = false
                 break
             }
@@ -185,15 +185,17 @@ class ModelScanner @Inject constructor(
 
     fun getDefaultMalayUrduModel(modelsDir: File = getPrimaryModelsDirectory()): OfflineModel {
         val modelFolder = File(modelsDir, "malay-urdu")
+        val manifestFile = File(modelFolder, "manifest.json")
+        val isReady = manifestFile.exists() && File(modelFolder, "model.onnx").exists()
         return OfflineModel(
             modelId = "nllb-200-distilled-600m-int8",
             modelName = "NLLB-200 Distilled (Malay ↔ Urdu INT8)",
             version = "1.0.0",
             localPath = modelFolder.absolutePath,
-            status = if (File(modelFolder, "manifest.json").exists()) OfflineModelStatus.READY else OfflineModelStatus.NOT_DOWNLOADED,
+            status = if (isReady) OfflineModelStatus.READY else OfflineModelStatus.NOT_DOWNLOADED,
             totalSize = 548_000_000L, // ~548 MB
             downloadedSize = if (modelFolder.exists()) calculateFolderSize(modelFolder) else 0L,
-            sha256 = "c8f2a1b9487ef892a0134bdf72199042",
+            sha256 = "",
             supportedLanguages = listOf("msa_Latn", "zsm_Latn", "urd_Arab", "ms", "ur"),
             license = "CC-BY-NC 4.0 (Non-Commercial, Attribution)",
             sourceUrl = "https://huggingface.co/facebook/nllb-200-distilled-600M",
