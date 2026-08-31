@@ -39,7 +39,7 @@ class ModelScanner @Inject constructor(
             }
         } catch (_: Exception) {}
         val appPrivate = try {
-            context.getExternalFilesDir("models") ?: (context.filesDir?.let { File(it, "models") }) ?: File("models")
+            context.getExternalFilesDir("models") ?: File(context.filesDir, "models")
         } catch (_: Exception) {
             File("models")
         }
@@ -59,8 +59,10 @@ class ModelScanner @Inject constructor(
         if (!candidateDirs.contains(modelsDir)) candidateDirs.add(modelsDir)
 
         val defaultModel = getDefaultMalayUrduModel(modelsDir)
-        offlineModelDao.insertModel(OfflineModelEntity.fromDomain(defaultModel))
-        detected.add(defaultModel)
+        // Do not overwrite an already-downloaded database record with the default NOT_DOWNLOADED state.
+        val existing = offlineModelDao.getModelById(defaultModel.modelId)
+        if (existing == null) offlineModelDao.insertModel(OfflineModelEntity.fromDomain(defaultModel))
+        detected.add(existing?.toDomain() ?: defaultModel)
 
         for (baseDir in candidateDirs) {
             if (!baseDir.exists()) continue
@@ -89,7 +91,8 @@ class ModelScanner @Inject constructor(
                         lastVerifiedAt = 0L
                     )
                     offlineModelDao.insertModel(OfflineModelEntity.fromDomain(offlineModel))
-                    if (detected.none { it.modelId == offlineModel.modelId }) detected.add(offlineModel)
+                    detected.removeAll { it.modelId == offlineModel.modelId }
+                    detected.add(offlineModel)
                 } catch (_: Exception) {
                     // Ignore invalid third-party packages.
                 }
@@ -137,7 +140,7 @@ class ModelScanner @Inject constructor(
             return@withContext Pair(false, message)
         }
         offlineModelDao.updateModel(entity.copy(status = OfflineModelStatus.READY, lastVerifiedAt = System.currentTimeMillis()))
-        Pair(true, "Model verified and loadable by ONNX Runtime. Translation inference is enabled only when the engine implementation supports this package.")
+        Pair(true, "Model verified and loadable by ONNX Runtime.")
     }
 
     suspend fun deleteModelPackage(modelId: String): Boolean = withContext(Dispatchers.IO) {
@@ -179,12 +182,12 @@ class ModelScanner @Inject constructor(
             version = "1.0.0",
             localPath = modelFolder.absolutePath,
             status = if (required.isFile) OfflineModelStatus.DOWNLOADED else OfflineModelStatus.NOT_DOWNLOADED,
-            totalSize = 1_200_000_000L,
+            totalSize = 1_160_000_000L,
             downloadedSize = downloaded,
             sha256 = "",
-            supportedLanguages = listOf("zsm_Latn", "msa_Latn", "urd_Arab"),
-            license = "Apache-2.0 (upstream conversion; verify upstream model card before distribution)",
-            sourceUrl = "https://huggingface.co/Hosstia/nllb-200-distilled-600m-onnx",
+            supportedLanguages = listOf("msa_Latn", "urd_Arab"),
+            license = "CC-BY-NC-4.0 (see upstream model card)",
+            sourceUrl = "https://huggingface.co/venddair/nllb-200-distilled-600M-onnx",
             runtime = "onnx-int8",
             installedAt = 0L,
             lastVerifiedAt = 0L
