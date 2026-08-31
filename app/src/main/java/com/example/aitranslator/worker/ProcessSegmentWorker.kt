@@ -42,65 +42,97 @@ class ProcessSegmentWorker @AssistedInject constructor(
         }
 
         try {
-            // 2. Transcribe Audio via Backend STT
-            repository.updateSegmentStatus(segmentId, SegmentStatus.TRANSCRIBING)
+            val apiKey = preferenceManager.geminiApiKey.first()
+            val model = preferenceManager.geminiModel.first()
+            val context = repository.getRecentContext(conversationId, segment.segmentNumber, windowSize = 3)
 
-            val transcribeResult = repository.transcribeAudio(audioFile, conversation.sourceLanguage)
-            if (transcribeResult.isFailure) {
-                val error = transcribeResult.exceptionOrNull()
-                if (isTransientError(error)) {
-                    return Result.retry()
-                } else {
-                    repository.updateSegmentStatus(
-                        segmentId,
-                        SegmentStatus.FAILED,
-                        error?.message ?: "Audio transcription failed"
-                    )
-                    return Result.failure()
+            if (apiKey.isNotBlank()) {
+                // Direct Gemini Multimodal Pipeline (Audio -> Transcription + Context-Aware Translation)
+                repository.updateSegmentStatus(segmentId, SegmentStatus.TRANSLATING)
+
+                val geminiResult = repository.processAudioWithGemini(
+                    audioFile = audioFile,
+                    sourceLanguage = conversation.sourceLanguage,
+                    targetLanguage = conversation.targetLanguage,
+                    context = context,
+                    apiKey = apiKey,
+                    model = model
+                )
+
+                if (geminiResult.isFailure) {
+                    val error = geminiResult.exceptionOrNull()
+                    if (isTransientError(error)) {
+                        return Result.retry()
+                    } else {
+                        repository.updateSegmentStatus(
+                            segmentId,
+                            SegmentStatus.FAILED,
+                            error?.message ?: "Gemini processing failed"
+                        )
+                        return Result.failure()
+                    }
                 }
-            }
 
-            val transcribedText = transcribeResult.getOrNull().orEmpty().trim()
-            if (transcribedText.isBlank()) {
-                repository.updateSegmentResult(segmentId, "[No speech detected]", "[No speech detected]", SegmentStatus.COMPLETED)
+                val (transcribedText, translatedText) = geminiResult.getOrNull() ?: Pair("", "")
+                val finalOrig = if (transcribedText.isBlank()) "[No speech detected]" else transcribedText
+                val finalTrans = if (translatedText.isBlank()) "[No speech detected]" else translatedText
+
+                repository.updateSegmentResult(segmentId, finalOrig, finalTrans, SegmentStatus.COMPLETED)
+                handleAudioRetention(audioFile)
+                return Result.success()
+            } else {
+                // Fallback to Backend Proxy Service if configured
+                repository.updateSegmentStatus(segmentId, SegmentStatus.TRANSCRIBING)
+
+                val transcribeResult = repository.transcribeAudio(audioFile, conversation.sourceLanguage)
+                if (transcribeResult.isFailure) {
+                    val error = transcribeResult.exceptionOrNull()
+                    if (isTransientError(error)) {
+                        return Result.retry()
+                    } else {
+                        repository.updateSegmentStatus(
+                            segmentId,
+                            SegmentStatus.FAILED,
+                            error?.message ?: "Audio transcription failed. Configure Gemini API key in Settings."
+                        )
+                        return Result.failure()
+                    }
+                }
+
+                val transcribedText = transcribeResult.getOrNull().orEmpty().trim()
+                if (transcribedText.isBlank()) {
+                    repository.updateSegmentResult(segmentId, "[No speech detected]", "[No speech detected]", SegmentStatus.COMPLETED)
+                    handleAudioRetention(audioFile)
+                    return Result.success()
+                }
+
+                repository.updateSegmentStatus(segmentId, SegmentStatus.TRANSLATING)
+                val translateResult = repository.translateText(
+                    text = transcribedText,
+                    sourceLanguage = conversation.sourceLanguage,
+                    targetLanguage = conversation.targetLanguage,
+                    context = context
+                )
+
+                if (translateResult.isFailure) {
+                    val error = translateResult.exceptionOrNull()
+                    if (isTransientError(error)) {
+                        return Result.retry()
+                    } else {
+                        repository.updateSegmentStatus(
+                            segmentId,
+                            SegmentStatus.FAILED,
+                            error?.message ?: "AI translation failed"
+                        )
+                        return Result.failure()
+                    }
+                }
+
+                val translatedText = translateResult.getOrNull().orEmpty().trim()
+                repository.updateSegmentResult(segmentId, transcribedText, translatedText, SegmentStatus.COMPLETED)
                 handleAudioRetention(audioFile)
                 return Result.success()
             }
-
-            // 3. Fetch rolling conversational context (3-turn window)
-            val context = repository.getRecentContext(conversationId, segment.segmentNumber, windowSize = 3)
-
-            // 4. Translate Text via Backend AI Translation
-            repository.updateSegmentStatus(segmentId, SegmentStatus.TRANSLATING)
-            val translateResult = repository.translateText(
-                text = transcribedText,
-                sourceLanguage = conversation.sourceLanguage,
-                targetLanguage = conversation.targetLanguage,
-                context = context
-            )
-
-            if (translateResult.isFailure) {
-                val error = translateResult.exceptionOrNull()
-                if (isTransientError(error)) {
-                    return Result.retry()
-                } else {
-                    repository.updateSegmentStatus(
-                        segmentId,
-                        SegmentStatus.FAILED,
-                        error?.message ?: "AI translation failed"
-                    )
-                    return Result.failure()
-                }
-            }
-
-            val translatedText = translateResult.getOrNull().orEmpty().trim()
-
-            // 5. Save Completed Result to Room Database
-            repository.updateSegmentResult(segmentId, transcribedText, translatedText, SegmentStatus.COMPLETED)
-
-            // 6. Handle Audio Retention (Delete only upon successful completion)
-            handleAudioRetention(audioFile)
-            return Result.success()
         } catch (e: Exception) {
             if (isTransientError(e)) {
                 return Result.retry()

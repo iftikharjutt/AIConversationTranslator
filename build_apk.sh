@@ -25,4 +25,11 @@ gradle :app:assembleDebug --no-daemon \
     -Pandroid.aapt2FromMavenOverride="$NATIVE_AAPT2" \
     -Pcom.android.build.gradle.aapt2FromMavenOverride="$NATIVE_AAPT2" "$@"
 
+mkdir -p dist
+if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
+    cp app/build/outputs/apk/debug/app-debug.apk dist/AIConversationTranslator.apk
+    cp app/build/outputs/apk/debug/app-debug.apk /sdcard/Download/AIConversationTranslator.apk 2>/dev/null || true
+    echo "APK successfully copied to dist/AIConversationTranslator.apk and /sdcard/Download/AIConversationTranslator.apk"
+fi
+
 echo "Build complete."

@@ -42,4 +42,33 @@ class RepositoryAndRetryTest {
         val rawClean = "{\"transcription\": \"Test\", \"translation\": \"ٹیسٹ\"}"
         assertEquals(rawClean, cleanJsonString(rawClean))
     }
+
+    @Test
+    fun testGeminiResponseParsingWithMarkdownAndWhitespace() {
+        val geminiResponse = """
+            ```json
+            {
+              "transcript": "Di manakah anda sekarang?",
+              "translation": "آپ اب کہاں ہیں؟"
+            }
+            ```
+        """.trimIndent()
+
+        val cleaned = cleanJsonString(geminiResponse)
+        val transcriptRegex = Regex(""""transcript"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"""")
+        val translationRegex = Regex(""""translation"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"""")
+
+        val transcript = transcriptRegex.find(cleaned)?.groupValues?.getOrNull(1)
+        val translation = translationRegex.find(cleaned)?.groupValues?.getOrNull(1)
+
+        assertEquals("Di manakah anda sekarang?", transcript)
+        assertEquals("آپ اب کہاں ہیں؟", translation)
+    }
+
+    @Test
+    fun testRohingyaLanguageVerificationFlag() {
+        val rohingya = com.example.aitranslator.domain.model.Language.getByCode("rhg")
+        assertEquals("Rohingya", rohingya.name)
+        assertTrue(rohingya.requiresCapabilityVerification)
+    }
 }

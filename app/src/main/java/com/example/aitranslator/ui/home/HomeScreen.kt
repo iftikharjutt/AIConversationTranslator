@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -33,6 +35,7 @@ import com.example.aitranslator.domain.model.Conversation
 import com.example.aitranslator.domain.model.Language
 import com.example.aitranslator.ui.recording.SegmentCard
 import com.example.aitranslator.util.Constants
+import com.example.aitranslator.util.GeminiModelOption
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -50,6 +53,7 @@ fun HomeScreen(
 
     var showSourceLangDialog by remember { mutableStateOf(false) }
     var showTargetLangDialog by remember { mutableStateOf(false) }
+    var showApiKeyDialog by remember { mutableStateOf(false) }
     var showBackendDialog by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) } // 0: Live Translations, 1: Past Conversations
     var permissionDeniedMessage by remember { mutableStateOf<String?>(null) }
@@ -84,7 +88,11 @@ fun HomeScreen(
     ) { perms ->
         val recordAudioGranted = perms[Manifest.permission.RECORD_AUDIO] == true
         if (recordAudioGranted) {
-            viewModel.createConversationAndStart { }
+            if (state.geminiApiKey.isBlank()) {
+                showApiKeyDialog = true
+            } else {
+                viewModel.createConversationAndStart { }
+            }
         } else {
             permissionDeniedMessage = "Microphone permission is required to translate speech."
         }
@@ -98,6 +106,8 @@ fun HomeScreen(
 
         if (!hasAudioPermission) {
             permissionLauncher.launch(permissionsToRequest)
+        } else if (state.geminiApiKey.isBlank()) {
+            showApiKeyDialog = true
         } else {
             viewModel.toggleLiveRecording()
         }
@@ -114,18 +124,18 @@ fun HomeScreen(
                             fontSize = 18.sp
                         )
                         Text(
-                            text = "Continuous Voice Interpretation",
+                            text = if (state.geminiApiKey.isNotBlank()) "Gemini Direct: ${state.geminiModel}" else "Gemini API: Key Required",
                             fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.primary
+                            color = if (state.geminiApiKey.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                         )
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showBackendDialog = true }) {
+                    IconButton(onClick = { showApiKeyDialog = true }) {
                         Icon(
-                            Icons.Default.Dns,
-                            contentDescription = "Backend Server URL",
-                            tint = MaterialTheme.colorScheme.primary
+                            Icons.Default.Key,
+                            contentDescription = "Gemini API Key",
+                            tint = if (state.geminiApiKey.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                         )
                     }
                     IconButton(onClick = onOpenHistory) {
@@ -137,8 +147,7 @@ fun HomeScreen(
                 }
             )
         }
-    )
- { padding ->
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -147,6 +156,57 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(modifier = Modifier.height(6.dp))
+
+            // Gemini API Setup Banner if not configured
+            if (state.geminiApiKey.isBlank()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showApiKeyDialog = true },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Gemini API Key Required",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Text(
+                                "Tap here to configure your Google Gemini API key to enable direct AI voice translation.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                        Button(
+                            onClick = { showApiKeyDialog = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text("Set Key", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
 
             // Language Selector Card
             Card(
@@ -452,6 +512,26 @@ fun HomeScreen(
         }
     }
 
+    // Gemini API Setup Dialog
+    if (showApiKeyDialog) {
+        GeminiApiKeyDialog(
+            currentKey = state.geminiApiKey,
+            currentModel = state.geminiModel,
+            onDismiss = { showApiKeyDialog = false },
+            onSave = { key, model ->
+                viewModel.saveGeminiApiKey(key)
+                viewModel.saveGeminiModel(model)
+                showApiKeyDialog = false
+            },
+            onTest = { key, model, callback ->
+                viewModel.testGeminiApiKey(key, model, callback)
+            },
+            onFetchModels = { key, callback ->
+                viewModel.fetchEligibleModels(key, callback)
+            }
+        )
+    }
+
     // Backend Server Setup Dialog
     if (showBackendDialog) {
         BackendServerDialog(
@@ -490,6 +570,206 @@ fun HomeScreen(
             }
         )
     }
+}
+
+@Composable
+fun GeminiApiKeyDialog(
+    currentKey: String,
+    currentModel: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit,
+    onTest: (String, String, (Boolean, String) -> Unit) -> Unit,
+    onFetchModels: (String, (List<GeminiModelOption>?, String?) -> Unit) -> Unit
+) {
+    var apiKeyInput by remember { mutableStateOf(currentKey) }
+    var selectedModel by remember { mutableStateOf(if (currentModel.isNotBlank()) currentModel else Constants.GEMINI_DEFAULT_MODEL) }
+    var customModelInput by remember { mutableStateOf("") }
+    var accountModels by remember { mutableStateOf<List<GeminiModelOption>?>(null) }
+    var isFetchingModels by remember { mutableStateOf(false) }
+    var fetchStatusMessage by remember { mutableStateOf<String?>(null) }
+    var testResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    var isTesting by remember { mutableStateOf(false) }
+    var passwordVisible by remember { mutableStateOf(false) }
+
+    val displayedModels = accountModels ?: Constants.GEMINI_MODELS
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Gemini Direct AI Setup", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "Enter your personal Google Gemini API Key. Direct audio processing and contextual translation are handled with Google Cloud.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = apiKeyInput,
+                    onValueChange = {
+                        apiKeyInput = it
+                        testResult = null
+                        fetchStatusMessage = null
+                    },
+                    label = { Text("Gemini API Key") },
+                    placeholder = { Text("AIzaSy...") },
+                    singleLine = true,
+                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(
+                                imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = "Toggle Visibility"
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (apiKeyInput.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            isFetchingModels = true
+                            fetchStatusMessage = "Checking your Google account for eligible models..."
+                            onFetchModels(apiKeyInput.trim()) { list, error ->
+                                isFetchingModels = false
+                                if (list != null && list.isNotEmpty()) {
+                                    accountModels = list
+                                    fetchStatusMessage = "Loaded ${list.size} eligible models from your Google account!"
+                                } else {
+                                    fetchStatusMessage = error ?: "Could not query models list"
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isFetchingModels
+                    ) {
+                        Text(if (isFetchingModels) "Checking Account..." else "Check Account for Eligible Models", fontSize = 12.sp)
+                    }
+                    if (fetchStatusMessage != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = fetchStatusMessage!!,
+                            fontSize = 11.sp,
+                            color = if (fetchStatusMessage?.startsWith("Loaded") == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Select Model:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+
+                displayedModels.forEach { modelOpt ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedModel = modelOpt.id
+                                customModelInput = ""
+                            }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedModel == modelOpt.id,
+                            onClick = {
+                                selectedModel = modelOpt.id
+                                customModelInput = ""
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(modelOpt.name, fontSize = 12.sp, fontWeight = if (selectedModel == modelOpt.id) FontWeight.Bold else FontWeight.Normal)
+                                if (modelOpt.isRecommended) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("⭐", fontSize = 11.sp)
+                                }
+                            }
+                            Text(modelOpt.description, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = customModelInput,
+                    onValueChange = {
+                        customModelInput = it
+                        if (it.isNotBlank()) {
+                            selectedModel = it.trim()
+                        }
+                    },
+                    label = { Text("Or Custom Model ID") },
+                    placeholder = { Text("e.g. gemini-2.5-flash") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            if (apiKeyInput.isNotBlank()) {
+                                isTesting = true
+                                testResult = null
+                                onTest(apiKeyInput.trim(), selectedModel) { success, msg ->
+                                    isTesting = false
+                                    testResult = Pair(success, msg)
+                                }
+                            }
+                        },
+                        enabled = apiKeyInput.isNotBlank() && !isTesting
+                    ) {
+                        Text(if (isTesting) "Testing..." else "Test Connection", fontSize = 12.sp)
+                    }
+                }
+
+                testResult?.let { (success, msg) ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = msg,
+                        fontSize = 12.sp,
+                        color = if (success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(apiKeyInput.trim(), selectedModel)
+                }
+            ) {
+                Text("Save Key")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable

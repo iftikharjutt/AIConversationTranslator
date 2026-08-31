@@ -21,4 +21,25 @@ object Constants {
     // WorkManager
     const val WORKER_SEGMENT_ID_KEY = "key_segment_id"
     const val WORKER_CONVERSATION_ID_KEY = "key_conversation_id"
+
+    // Gemini AI Models (Direct REST generateContent with Multimodal Audio)
+    const val GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
+    const val GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/"
+
+    val GEMINI_MODELS = listOf(
+        GeminiModelOption("gemini-2.5-flash", "Gemini 2.5 Flash", "Latest high-speed multimodal audio & translation (Recommended)", true),
+        GeminiModelOption("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", "Ultra low latency & high throughput", false),
+        GeminiModelOption("gemini-2.5-pro", "Gemini 2.5 Pro", "High reasoning & nuanced accuracy", false),
+        GeminiModelOption("gemini-2.0-flash", "Gemini 2.0 Flash", "Next-gen fast multimodal model", false),
+        GeminiModelOption("gemini-2.0-flash-lite", "Gemini 2.0 Flash-Lite", "Lightweight next-gen model", false),
+        GeminiModelOption("gemini-1.5-flash", "Gemini 1.5 Flash", "Standard fast audio translation", false),
+        GeminiModelOption("gemini-1.5-pro", "Gemini 1.5 Pro", "High-capacity legacy reasoning model", false)
+    )
 }
+
+data class GeminiModelOption(
+    val id: String,
+    val name: String,
+    val description: String,
+    val isRecommended: Boolean = false
+)

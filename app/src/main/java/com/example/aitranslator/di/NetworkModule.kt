@@ -63,5 +63,17 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideTranslationApi(retrofit: Retrofit): TranslationApi = retrofit.create(TranslationApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideGeminiApi(okHttpClient: OkHttpClient, json: Json): com.example.aitranslator.data.remote.GeminiApi {
+        val contentType = "application/json".toMediaType()
+        return Retrofit.Builder()
+            .baseUrl(com.example.aitranslator.util.Constants.GEMINI_BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(json.asConverterFactory(contentType))
+            .build()
+            .create(com.example.aitranslator.data.remote.GeminiApi::class.java)
+    }
 }
 

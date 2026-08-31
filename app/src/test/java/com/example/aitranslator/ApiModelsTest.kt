@@ -45,4 +45,35 @@ class ApiModelsTest {
         assertEquals("صبح بخیر", response.translation)
         assertNull(response.error)
     }
+
+    @Test
+    fun testGeminiStructuredResultSerialization() {
+        val jsonStr = """{"transcript":"Apa khabar?","translation":"آپ کیسے ہیں؟"}"""
+        val response = json.decodeFromString<com.example.aitranslator.data.remote.GeminiStructuredResult>(jsonStr)
+        assertEquals("Apa khabar?", response.transcript)
+        assertEquals("آپ کیسے ہیں؟", response.translation)
+    }
+
+    @Test
+    fun testGeminiGenerateContentRequestSerialization() {
+        val request = com.example.aitranslator.data.remote.GeminiGenerateContentRequest(
+            contents = listOf(
+                com.example.aitranslator.data.remote.GeminiContent(
+                    parts = listOf(
+                        com.example.aitranslator.data.remote.GeminiPart(text = "Hello world"),
+                        com.example.aitranslator.data.remote.GeminiPart(
+                            inlineData = com.example.aitranslator.data.remote.GeminiInlineData(
+                                mimeType = "audio/wav",
+                                data = "UklGRi4AAABXQVZFZg=="
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val jsonStr = json.encodeToString(com.example.aitranslator.data.remote.GeminiGenerateContentRequest.serializer(), request)
+        assertTrue(jsonStr.contains("Hello world"))
+        assertTrue(jsonStr.contains("audio/wav"))
+        assertTrue(jsonStr.contains("UklGRi4AAABXQVZFZg=="))
+    }
 }

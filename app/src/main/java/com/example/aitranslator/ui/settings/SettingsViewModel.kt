@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.aitranslator.data.preferences.PreferenceManager
 import com.example.aitranslator.domain.repository.TranslationRepository
+import com.example.aitranslator.util.Constants
+import com.example.aitranslator.util.GeminiModelOption
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -18,7 +20,9 @@ data class SettingsUiState(
     val saveAudio: Boolean = true,
     val deleteAudioAfterProcessing: Boolean = false,
     val backendUrl: String = "",
-    val isDebugMode: Boolean = true
+    val isDebugMode: Boolean = true,
+    val geminiApiKey: String = "",
+    val geminiModel: String = Constants.GEMINI_DEFAULT_MODEL
 )
 
 @HiltViewModel
@@ -38,9 +42,11 @@ class SettingsViewModel @Inject constructor(
         },
         combine(
             preferenceManager.backendUrl,
-            preferenceManager.isDebugMode
-        ) { url, debug ->
-            SettingsPart2(url, debug)
+            preferenceManager.isDebugMode,
+            preferenceManager.geminiApiKey,
+            preferenceManager.geminiModel
+        ) { url, debug, apiKey, model ->
+            SettingsPart2(url, debug, apiKey, model)
         }
     ) { p1, p2 ->
         SettingsUiState(
@@ -49,7 +55,9 @@ class SettingsViewModel @Inject constructor(
             saveAudio = p1.saveAud,
             deleteAudioAfterProcessing = p1.delAud,
             backendUrl = p2.url,
-            isDebugMode = p2.debug
+            isDebugMode = p2.debug,
+            geminiApiKey = p2.apiKey,
+            geminiModel = p2.model
         )
     }.stateIn(
         viewModelScope,
@@ -81,6 +89,40 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { preferenceManager.setDebugMode(debug) }
     }
 
+    fun setGeminiApiKey(apiKey: String) {
+        viewModelScope.launch { preferenceManager.setGeminiApiKey(apiKey) }
+    }
+
+    fun clearGeminiApiKey() {
+        viewModelScope.launch { preferenceManager.clearGeminiApiKey() }
+    }
+
+    fun setGeminiModel(model: String) {
+        viewModelScope.launch { preferenceManager.setGeminiModel(model) }
+    }
+
+    fun testGeminiApiKey(apiKey: String, model: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.testGeminiApiKey(apiKey, model)
+            if (result.isSuccess) {
+                onResult(true, "Successfully connected to Gemini API (${model})!")
+            } else {
+                onResult(false, result.exceptionOrNull()?.message ?: "Connection test failed")
+            }
+        }
+    }
+
+    fun fetchEligibleModels(apiKey: String, onResult: (List<GeminiModelOption>?, String?) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.fetchEligibleModels(apiKey)
+            if (result.isSuccess) {
+                onResult(result.getOrNull(), null)
+            } else {
+                onResult(null, result.exceptionOrNull()?.message ?: "Failed to query account models")
+            }
+        }
+    }
+
     fun testBackendConnection(onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             val result = repository.testBackendConnection()
@@ -102,6 +144,8 @@ private data class SettingsPart1(
 
 private data class SettingsPart2(
     val url: String,
-    val debug: Boolean
+    val debug: Boolean,
+    val apiKey: String,
+    val model: String
 )
 

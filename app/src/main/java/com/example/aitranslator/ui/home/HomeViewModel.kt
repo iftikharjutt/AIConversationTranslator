@@ -11,6 +11,7 @@ import com.example.aitranslator.domain.model.Language
 import com.example.aitranslator.domain.model.TranslationSegment
 import com.example.aitranslator.domain.repository.TranslationRepository
 import com.example.aitranslator.tts.TextToSpeechManager
+import com.example.aitranslator.util.Constants
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -34,6 +35,8 @@ data class HomeUiState(
     val targetLanguage: Language = Language.defaultTarget(),
     val recentConversations: List<Conversation> = emptyList(),
     val segmentDurationSeconds: Int = 10,
+    val geminiApiKey: String = "",
+    val geminiModel: String = Constants.GEMINI_DEFAULT_MODEL,
     val backendUrl: String = "",
     val isRecording: Boolean = false,
     val activeConversationId: Long? = null,
@@ -81,23 +84,25 @@ class HomeViewModel @Inject constructor(
             preferenceManager.targetLanguageCode,
             repository.observeAllConversations(),
             preferenceManager.segmentDurationSeconds,
-            preferenceManager.backendUrl
-        ) { srcCode, tgtCode, conversations, duration, backendUrl ->
-            Tuple5(srcCode, tgtCode, conversations, duration, backendUrl)
+            preferenceManager.geminiApiKey
+        ) { srcCode, tgtCode, conversations, duration, apiKey ->
+            Tuple5(srcCode, tgtCode, conversations, duration, apiKey)
         },
         combine(
+            preferenceManager.geminiModel,
+            preferenceManager.backendUrl,
             segmentManager.isRecording,
             segmentManager.currentSegmentNumber,
-            _activeConversationId,
-            activeConvFlow
-        ) { isRec, segNum, activeId, activeConv ->
-            Tuple4(isRec, segNum, activeId, activeConv)
+            _activeConversationId
+        ) { model, backendUrl, isRec, segNum, activeId ->
+            Tuple5(model, backendUrl, isRec, segNum, activeId)
         },
         combine(
+            activeConvFlow,
             activeSegmentsFlow,
             _elapsedSeconds
-        ) { segments, elapsed ->
-            Pair(segments, elapsed)
+        ) { activeConv, segments, elapsed ->
+            Triple(activeConv, segments, elapsed)
         }
     ) { base1, base2, base3 ->
         HomeUiState(
@@ -105,13 +110,15 @@ class HomeViewModel @Inject constructor(
             targetLanguage = Language.getByCode(base1.v2),
             recentConversations = base1.v3.take(5),
             segmentDurationSeconds = base1.v4,
-            backendUrl = base1.v5,
-            isRecording = base2.v1,
-            currentSegmentNumber = base2.v2,
-            activeConversationId = base2.v3,
-            activeConversation = base2.v4,
-            liveSegments = base3.first,
-            elapsedRecordingSeconds = base3.second,
+            geminiApiKey = base1.v5,
+            geminiModel = base2.v1,
+            backendUrl = base2.v2,
+            isRecording = base2.v3,
+            currentSegmentNumber = base2.v4,
+            activeConversationId = base2.v5,
+            activeConversation = base3.first,
+            liveSegments = base3.second,
+            elapsedRecordingSeconds = base3.third,
             isLoading = false
         )
     }.stateIn(
@@ -141,6 +148,46 @@ class HomeViewModel @Inject constructor(
     fun setBackendUrl(url: String) {
         viewModelScope.launch {
             preferenceManager.setBackendUrl(url)
+        }
+    }
+
+    fun saveGeminiApiKey(apiKey: String) {
+        viewModelScope.launch {
+            preferenceManager.setGeminiApiKey(apiKey)
+        }
+    }
+
+    fun clearGeminiApiKey() {
+        viewModelScope.launch {
+            preferenceManager.clearGeminiApiKey()
+        }
+    }
+
+    fun saveGeminiModel(model: String) {
+        viewModelScope.launch {
+            preferenceManager.setGeminiModel(model)
+        }
+    }
+
+    fun testGeminiApiKey(apiKey: String, model: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.testGeminiApiKey(apiKey, model)
+            if (result.isSuccess) {
+                onResult(true, "Successfully connected to Gemini API (${model})!")
+            } else {
+                onResult(false, result.exceptionOrNull()?.message ?: "Connection test failed")
+            }
+        }
+    }
+
+    fun fetchEligibleModels(apiKey: String, onResult: (List<com.example.aitranslator.util.GeminiModelOption>?, String?) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.fetchEligibleModels(apiKey)
+            if (result.isSuccess) {
+                onResult(result.getOrNull(), null)
+            } else {
+                onResult(null, result.exceptionOrNull()?.message ?: "Failed to query account models")
+            }
         }
     }
 
