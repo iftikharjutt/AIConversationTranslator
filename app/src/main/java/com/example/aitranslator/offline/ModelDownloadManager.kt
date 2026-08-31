@@ -16,19 +16,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
-enum class DownloadStatus {
-    IDLE,
-    PREPARING,
-    DOWNLOADING,
-    PAUSED,
-    VERIFYING,
-    COMPLETED,
-    FAILED,
-    CANCELLED
-}
+enum class DownloadStatus { IDLE, PREPARING, DOWNLOADING, PAUSED, VERIFYING, COMPLETED, FAILED, CANCELLED }
 
 data class DownloadProgress(
     val modelId: String = "",
@@ -49,161 +41,130 @@ class ModelDownloadManager @Inject constructor(
 ) {
     private val _downloadState = MutableStateFlow(DownloadProgress())
     val downloadState: StateFlow<DownloadProgress> = _downloadState.asStateFlow()
-
     private var downloadJob: Job? = null
     private val downloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    private val hfBaseUrl = "https://huggingface.co/Hosstia/nllb-200-distilled-600m-onnx/resolve/main"
+
+    private data class RemoteFile(val name: String, val url: String)
+
+    private val remoteFiles = listOf(
+        RemoteFile("encoder_model_int8.onnx", "$hfBaseUrl/encoder_model_int8.onnx"),
+        RemoteFile("decoder_with_past_model_int8.onnx", "$hfBaseUrl/decoder_with_past_model_int8.onnx"),
+        RemoteFile("tokenizer.json", "$hfBaseUrl/tokenizer.json")
+    )
+
     fun startDownload(model: OfflineModel) {
         if (_downloadState.value.status == DownloadStatus.DOWNLOADING) return
-
         downloadJob?.cancel()
         downloadJob = downloadScope.launch {
             try {
-                _downloadState.value = DownloadProgress(
-                    modelId = model.modelId,
-                    status = DownloadStatus.PREPARING,
-                    progress = 0,
-                    message = "Checking storage space..."
-                )
-
-                var targetDir = File(model.localPath)
-                try {
-                    if (!targetDir.exists()) {
-                        targetDir.mkdirs()
-                    }
-                    val test = File(targetDir, ".test")
-                    test.createNewFile()
-                    test.delete()
-                } catch (_: Exception) {
-                    targetDir = File(modelScanner.getPrimaryModelsDirectory(), "malay-urdu")
-                    targetDir.mkdirs()
-                }
-
-                // Check free disk space
-                val statPath = if (targetDir.exists()) targetDir.absolutePath else context.filesDir.absolutePath
-                val stat = StatFs(statPath)
+                val targetDir = File(modelScanner.getPrimaryModelsDirectory(), "malay-urdu")
+                targetDir.mkdirs()
+                val stat = StatFs(targetDir.absolutePath)
                 val availableBytes = stat.availableBlocksLong * stat.blockSizeLong
-                val requiredBytes = if (model.totalSize > 0) model.totalSize else 548_000_000L
-
-                if (availableBytes < 100_000_000L) {
-                    _downloadState.value = DownloadProgress(
-                        modelId = model.modelId,
-                        status = DownloadStatus.FAILED,
-                        message = "Insufficient storage space."
-                    )
+                val requiredBytes = 1_200_000_000L
+                if (availableBytes < requiredBytes) {
+                    _downloadState.value = DownloadProgress(model.modelId, DownloadStatus.FAILED, message = "At least 1.2 GB free storage is required for this model.")
                     return@launch
                 }
 
-                _downloadState.value = DownloadProgress(
-                    modelId = model.modelId,
-                    status = DownloadStatus.DOWNLOADING,
-                    progress = 10,
-                    downloadedBytes = 0L,
-                    totalBytes = requiredBytes,
-                    message = "Downloading NLLB-200 Malay ↔ Urdu model package..."
-                )
+                _downloadState.value = DownloadProgress(model.modelId, DownloadStatus.PREPARING, message = "Preparing NLLB-200 INT8 model download...")
 
-                // Write manifest.json
+                val fileInfos = mutableListOf<ModelFileInfo>()
+                for ((index, remote) in remoteFiles.withIndex()) {
+                    ensureActive()
+                    val destination = File(targetDir, remote.name)
+                    val result = downloadFile(remote.url, destination, model.modelId, index, remoteFiles.size)
+                    fileInfos += ModelFileInfo(remote.name, result.first, result.second)
+                }
+
                 val manifest = ModelManifest(
-                    modelId = model.modelId,
-                    modelName = model.modelName,
-                    version = model.version,
-                    supportedLanguages = model.supportedLanguages,
-                    modelFiles = listOf(
-                        ModelFileInfo("model.onnx", 2048L, ""),
-                        ModelFileInfo("tokenizer.json", 1024L, ""),
-                        ModelFileInfo("sentencepiece.bpe.model", 1024L, "")
-                    ),
-                    expectedSize = requiredBytes,
+                    modelId = "nllb-200-distilled-600m-int8",
+                    modelName = "NLLB-200 Distilled 600M INT8 — Malay ↔ Urdu",
+                    version = "1.0.0",
+                    supportedLanguages = listOf("zsm_Latn", "msa_Latn", "urd_Arab"),
+                    modelFiles = fileInfos,
+                    expectedSize = fileInfos.sumOf { it.size },
                     sha256 = "",
-                    license = model.license,
-                    sourceUrl = model.sourceUrl,
+                    license = "See upstream model license before commercial distribution",
+                    sourceUrl = hfBaseUrl,
                     createdAt = System.currentTimeMillis(),
-                    runtime = model.runtime
+                    runtime = "onnx-int8"
                 )
+                File(targetDir, "manifest.json").writeText(json.encodeToString(manifest))
 
-                val manifestFile = File(targetDir, "manifest.json")
-                manifestFile.writeText(json.encodeToString(manifest))
-
-                // Initialize chunked files
-                val modelFile = File(targetDir, "model.onnx")
-                val tokenizerFile = File(targetDir, "tokenizer.json")
-                val spmFile = File(targetDir, "sentencepiece.bpe.model")
-
-                if (!tokenizerFile.exists() || tokenizerFile.length() == 0L) {
-                    tokenizerFile.writeText("{\"model_type\":\"nllb\",\"src_lang\":\"msa_Latn\",\"tgt_lang\":\"urd_Arab\"}")
-                }
-                if (!spmFile.exists() || spmFile.length() == 0L) {
-                    spmFile.writeBytes(ByteArray(1024) { 0 })
-                }
-                if (!modelFile.exists() || modelFile.length() == 0L) {
-                    modelFile.writeBytes(ByteArray(2048) { 0 })
-                }
-
-                // Progress simulation for smooth user feedback
-                for (p in 20..100 step 20) {
-                    delay(200)
-                    if (!isActive) return@launch
-                    val currentDownloaded = (requiredBytes * (p / 100.0)).toLong()
-                    _downloadState.value = DownloadProgress(
-                        modelId = model.modelId,
-                        status = DownloadStatus.DOWNLOADING,
-                        progress = p,
-                        downloadedBytes = currentDownloaded,
-                        totalBytes = requiredBytes,
-                        message = "Downloading: $p%"
-                    )
-                }
-
-                _downloadState.value = DownloadProgress(
-                    modelId = model.modelId,
-                    status = DownloadStatus.VERIFYING,
-                    progress = 100,
-                    message = "Verifying package integrity..."
-                )
-
-                val updatedModel = model.copy(
+                val installed = model.copy(
+                    modelId = "nllb-200-distilled-600m-int8",
+                    modelName = manifest.modelName,
                     localPath = targetDir.absolutePath,
                     status = OfflineModelStatus.READY,
-                    downloadedSize = requiredBytes,
+                    totalSize = manifest.expectedSize,
+                    downloadedSize = manifest.expectedSize,
+                    sha256 = "",
+                    supportedLanguages = manifest.supportedLanguages,
+                    license = manifest.license,
+                    sourceUrl = manifest.sourceUrl,
+                    runtime = manifest.runtime,
                     lastVerifiedAt = System.currentTimeMillis()
                 )
-                offlineModelDao.insertModel(OfflineModelEntity.fromDomain(updatedModel))
-
-                _downloadState.value = DownloadProgress(
-                    modelId = model.modelId,
-                    status = DownloadStatus.COMPLETED,
-                    progress = 100,
-                    downloadedBytes = requiredBytes,
-                    totalBytes = requiredBytes,
-                    message = "Model installed and verified! Ready for offline translation."
-                )
+                offlineModelDao.insertModel(OfflineModelEntity.fromDomain(installed))
+                _downloadState.value = DownloadProgress(model.modelId, DownloadStatus.COMPLETED, 100, manifest.expectedSize, manifest.expectedSize, "Real model files downloaded. Runtime validation is required before translation.")
             } catch (e: CancellationException) {
-                _downloadState.value = DownloadProgress(
-                    modelId = model.modelId,
-                    status = DownloadStatus.CANCELLED,
-                    message = "Download cancelled"
-                )
+                _downloadState.value = _downloadState.value.copy(status = DownloadStatus.CANCELLED, message = "Download cancelled")
             } catch (e: Exception) {
-                _downloadState.value = DownloadProgress(
-                    modelId = model.modelId,
-                    status = DownloadStatus.FAILED,
-                    message = "Download failed: ${e.message}"
-                )
+                _downloadState.value = _downloadState.value.copy(status = DownloadStatus.FAILED, message = "Download failed: ${e.message}")
             }
         }
     }
 
-    fun pauseDownload() {
-        downloadJob?.cancel()
-        _downloadState.value = _downloadState.value.copy(
-            status = DownloadStatus.PAUSED,
-            message = "Download paused"
-        )
+    private suspend fun downloadFile(url: String, destination: File, modelId: String, fileIndex: Int, fileCount: Int): Pair<Long, String> = withContext(Dispatchers.IO) {
+        var existing = if (destination.exists()) destination.length() else 0L
+        var request = Request.Builder().url(url)
+        if (existing > 0) request = request.header("Range", "bytes=$existing-")
+        var response = okHttpClient.newCall(request.build()).execute()
+        if (!response.isSuccessful && existing > 0) {
+            existing = 0L
+            response.close()
+            response = okHttpClient.newCall(Request.Builder().url(url).build()).execute()
+        }
+        response.use { res ->
+            if (!res.isSuccessful) error("HTTP ${res.code} while downloading ${destination.name}")
+            val body = res.body ?: error("Empty response for ${destination.name}")
+            val append = existing > 0 && res.code == 206
+            if (!append) existing = 0L
+            FileOutputStream(destination, append).use { output ->
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(1024 * 1024)
+                    var written = existing
+                    val total = if (body.contentLength() > 0) body.contentLength() + existing else -1L
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        ensureActive()
+                        output.write(buffer, 0, read)
+                        written += read
+                        val overallTotal = if (total > 0) total else 0L
+                        val fileProgress = if (overallTotal > 0) ((written * 100) / overallTotal).toInt() else 0
+                        val overall = (((fileIndex * 100L) + fileProgress) / fileCount).toInt().coerceIn(0, 99)
+                        _downloadState.value = DownloadProgress(modelId, DownloadStatus.DOWNLOADING, overall, written, overallTotal, "Downloading ${destination.name} ($fileProgress%)")
+                    }
+                }
+            }
+        }
+        if (!destination.exists() || destination.length() == 0L) error("Downloaded file is empty: ${destination.name}")
+        destination.length() to sha256(destination)
     }
 
-    fun cancelDownload() {
-        downloadJob?.cancel()
-        _downloadState.value = DownloadProgress(status = DownloadStatus.CANCELLED, message = "Download cancelled")
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(1024 * 1024)
+            var read: Int
+            while (input.read(buffer).also { read = it } != -1) digest.update(buffer, 0, read)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
+
+    fun pauseDownload() { downloadJob?.cancel(); _downloadState.value = _downloadState.value.copy(status = DownloadStatus.PAUSED, message = "Download paused") }
+    fun cancelDownload() { downloadJob?.cancel(); _downloadState.value = DownloadProgress(status = DownloadStatus.CANCELLED, message = "Download cancelled") }
 }
