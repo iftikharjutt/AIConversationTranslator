@@ -4,7 +4,6 @@ import com.example.aitranslator.data.local.OfflineModelDao
 import com.example.aitranslator.domain.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -13,75 +12,41 @@ class OfflineTranslationEngine @Inject constructor(
     private val offlineModelDao: OfflineModelDao,
     private val modelScanner: ModelScanner
 ) : TranslationEngine {
-
-    override val engineName: String = "Offline (Malay ↔ Urdu NLLB-200)"
+    override val engineName: String = "Offline Malay ↔ Urdu"
     override val isOfflineEngine: Boolean = true
 
-    fun mapLanguageToFloresCode(langCode: String): String {
-        return when (langCode.lowercase().trim()) {
-            "ms", "zsm", "msa", "may", "malay" -> "zsm_Latn"
-            "ur", "urd", "urdu" -> "urd_Arab"
-            "en", "eng", "english" -> "eng_Latn"
-            "ar", "ara", "arabic" -> "arb_Arab"
-            "hi", "hin", "hindi" -> "hin_Deva"
-            "id", "ind", "indonesian" -> "ind_Latn"
-            else -> langCode
-        }
+    fun mapLanguageToFloresCode(langCode: String): String = when (langCode.lowercase().trim()) {
+        "ms", "zsm", "msa", "may", "malay" -> "zsm_Latn"
+        "ur", "urd", "urdu" -> "urd_Arab"
+        "en", "eng", "english" -> "eng_Latn"
+        "ar", "ara", "arabic" -> "arb_Arab"
+        "hi", "hin", "hindi" -> "hin_Deva"
+        "id", "ind", "indonesian" -> "ind_Latn"
+        else -> langCode
     }
 
-    override suspend fun translate(
-        text: String,
-        sourceLanguage: String,
-        targetLanguage: String,
-        context: String?
-    ): Result<TranslationResult> = withContext(Dispatchers.Default) {
+    override suspend fun translate(text: String, sourceLanguage: String, targetLanguage: String, context: String?): Result<TranslationResult> = withContext(Dispatchers.Default) {
         val startTime = System.currentTimeMillis()
-
         if (text.isBlank()) {
-            return@withContext Result.success(
-                TranslationResult(
-                    originalText = text,
-                    translatedText = "",
-                    engineType = TranslationEngineType.OFFLINE_ONNX,
-                    engineDescription = "Offline — Malay↔Urdu",
-                    latencyMs = 0L,
-                    isOffline = true
-                )
-            )
+            return@withContext Result.success(TranslationResult(text, "", TranslationEngineType.OFFLINE_GLOSSARY_FALLBACK, "Offline — Local Dictionary", 0L, true))
         }
 
-        // STRICT ZERO-NETWORK GUARANTEE: No network or HTTP calls are made in this method.
-        val srcFlores = mapLanguageToFloresCode(sourceLanguage)
-        val tgtFlores = mapLanguageToFloresCode(targetLanguage)
-
-        // Check if an offline model is ready
-        val model = offlineModelDao.getModelById("nllb-200-distilled-600m-int8")
-        val isModelReady = model?.status == OfflineModelStatus.READY && File(model.localPath).exists()
-
-        val translated = if (srcFlores == "zsm_Latn" && tgtFlores == "urd_Arab") {
-            translateMalayToUrdu(text)
-        } else if (srcFlores == "urd_Arab" && tgtFlores == "zsm_Latn") {
-            translateUrduToMalay(text)
-        } else {
-            // Basic fallback for other language pairs if requested offline
-            text
+        // This engine is deliberately conservative: downloaded NLLB ONNX files are
+        // validated separately, but this class does not pretend that a glossary is
+        // neural inference. Real NLLB encoder/decoder + tokenizer generation will be
+        // enabled only after the Android inference adapter is implemented and tested.
+        val src = mapLanguageToFloresCode(sourceLanguage)
+        val tgt = mapLanguageToFloresCode(targetLanguage)
+        val translated = when {
+            src == "zsm_Latn" && tgt == "urd_Arab" -> translateMalayToUrdu(text)
+            src == "urd_Arab" && tgt == "zsm_Latn" -> translateUrduToMalay(text)
+            else -> text
         }
-
         val latency = System.currentTimeMillis() - startTime
-        Result.success(
-            TranslationResult(
-                originalText = text,
-                translatedText = translated,
-                engineType = if (isModelReady) TranslationEngineType.OFFLINE_ONNX else TranslationEngineType.OFFLINE_GLOSSARY_FALLBACK,
-                engineDescription = if (isModelReady) "Offline — Malay↔Urdu (NLLB-200 INT8)" else "Offline — Malay↔Urdu (Local Dictionary)",
-                latencyMs = latency,
-                isOffline = true
-            )
-        )
+        Result.success(TranslationResult(text, translated, TranslationEngineType.OFFLINE_GLOSSARY_FALLBACK, "Offline — Malay↔Urdu (Local Dictionary)", latency, true))
     }
 
     private fun translateMalayToUrdu(text: String): String {
-        // 1. Check direct dictionary matches
         val lower = text.trim().lowercase()
         val directMatch = when (lower) {
             "apa khabar?", "apa khabar" -> "آپ کیسے ہیں؟"
@@ -100,13 +65,8 @@ class OfflineTranslationEngine @Inject constructor(
             else -> null
         }
         if (directMatch != null) return directMatch
-
-        // 2. Apply general translation rules and glossary
-        var translated = text
-        translated = OfflineGlossary.applyMalayToUrduGlossary(translated)
-
-        // Basic conversational substitutions
-        translated = translated
+        var translated = OfflineGlossary.applyMalayToUrduGlossary(text)
+        return translated
             .replace(Regex("(?i)\\bsaya\\b"), "میں")
             .replace(Regex("(?i)\\banda\\b|\\bawak\\b"), "آپ")
             .replace(Regex("(?i)\\bmakan\\b"), "کھانا")
@@ -118,13 +78,10 @@ class OfflineTranslationEngine @Inject constructor(
             .replace(Regex("(?i)\\bbilik\\b"), "کمرہ")
             .replace(Regex("(?i)\\bkereta\\b"), "گاڑی")
             .replace(Regex("(?i)\\bjalan\\b"), "راستہ / سڑک")
-
-        return translated
     }
 
     private fun translateUrduToMalay(text: String): String {
-        val trimmed = text.trim()
-        val directMatch = when (trimmed) {
+        val directMatch = when (text.trim()) {
             "آپ کیسے ہیں؟", "آپ کیسے ہیں" -> "Apa khabar?"
             "میں ٹھیک ہوں۔", "میں ٹھیک ہوں" -> "Khabar baik."
             "صبح بخیر۔", "صبح بخیر" -> "Selamat pagi."
@@ -138,11 +95,7 @@ class OfflineTranslationEngine @Inject constructor(
             else -> null
         }
         if (directMatch != null) return directMatch
-
-        var translated = text
-        translated = OfflineGlossary.applyUrduToMalayGlossary(translated)
-
-        translated = translated
+        return OfflineGlossary.applyUrduToMalayGlossary(text)
             .replace("میں", "saya")
             .replace("آپ", "awak")
             .replace("کھانا", "makan")
@@ -151,7 +104,5 @@ class OfflineTranslationEngine @Inject constructor(
             .replace("گاڑی", "kereta")
             .replace("کہاں", "di mana")
             .replace("کب", "bila")
-
-        return translated
     }
 }
