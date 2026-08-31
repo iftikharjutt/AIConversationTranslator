@@ -36,12 +36,14 @@ class ModelDownloadManager @Inject constructor(
     private var downloadJob:Job?=null
     private val scope=CoroutineScope(Dispatchers.IO+SupervisorJob())
     private val base="https://huggingface.co/venddair/nllb-200-distilled-600M-onnx/resolve/main"
-    private val files=listOf("encoder_model_int8.onnx","decoder_model_int8.onnx","tokenizer.json","sentencepiece.bpe.model","config.json","generation_config.json","special_tokens_map.json","tokenizer_config.json")
+    // Only files that actually exist in the venddair repository.
+    private val files=listOf("encoder_model_int8.onnx","decoder_model_int8.onnx","sentencepiece.bpe.model","config.json","generation_config.json","special_tokens_map.json","tokenizer_config.json")
 
     fun startDownload(model:OfflineModel){
         if(_downloadState.value.status==DownloadStatus.DOWNLOADING)return
         downloadJob?.cancel(); downloadJob=scope.launch {
             try{
+                _downloadState.value=DownloadProgress(model.modelId,DownloadStatus.PREPARING,0,0,0,"Preparing model download...")
                 val dir=File(modelScanner.getPrimaryModelsDirectory(),"malay-urdu");dir.mkdirs()
                 val stat=StatFs(dir.absolutePath)
                 val free=stat.availableBlocksLong*stat.blockSizeLong
