@@ -88,7 +88,7 @@ fun HomeScreen(
     ) { perms ->
         val recordAudioGranted = perms[Manifest.permission.RECORD_AUDIO] == true
         if (recordAudioGranted) {
-            if (state.geminiApiKey.isBlank()) {
+            if (state.translationMode != com.example.aitranslator.domain.model.TranslationMode.OFFLINE && state.geminiApiKey.isBlank()) {
                 showApiKeyDialog = true
             } else {
                 viewModel.createConversationAndStart { }
@@ -106,7 +106,7 @@ fun HomeScreen(
 
         if (!hasAudioPermission) {
             permissionLauncher.launch(permissionsToRequest)
-        } else if (state.geminiApiKey.isBlank()) {
+        } else if (state.translationMode != com.example.aitranslator.domain.model.TranslationMode.OFFLINE && state.geminiApiKey.isBlank()) {
             showApiKeyDialog = true
         } else {
             viewModel.toggleLiveRecording()
@@ -123,10 +123,15 @@ fun HomeScreen(
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp
                         )
+                        val subtitleText = when (state.translationMode) {
+                            com.example.aitranslator.domain.model.TranslationMode.OFFLINE -> "Offline: Malay ↔ Urdu (Zero Internet)"
+                            com.example.aitranslator.domain.model.TranslationMode.ONLINE -> if (state.geminiApiKey.isNotBlank()) "Gemini Direct: ${state.geminiModel}" else "Gemini API: Key Required"
+                            com.example.aitranslator.domain.model.TranslationMode.AUTO -> if (state.geminiApiKey.isNotBlank()) "AUTO: Gemini (${state.geminiModel}) + Offline" else "AUTO: Offline Mode Active"
+                        }
                         Text(
-                            text = if (state.geminiApiKey.isNotBlank()) "Gemini Direct: ${state.geminiModel}" else "Gemini API: Key Required",
+                            text = subtitleText,
                             fontSize = 11.sp,
-                            color = if (state.geminiApiKey.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 },

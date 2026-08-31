@@ -32,4 +32,7 @@ object DatabaseModule {
 
     @Provides
     fun provideSegmentDao(database: AppDatabase): SegmentDao = database.segmentDao()
+
+    @Provides
+    fun provideOfflineModelDao(database: AppDatabase): com.example.aitranslator.data.local.OfflineModelDao = database.offlineModelDao()
 }

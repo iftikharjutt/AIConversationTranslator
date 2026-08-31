@@ -20,7 +20,8 @@ class ProcessSegmentWorker @AssistedInject constructor(
     @Assisted private val appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val repository: TranslationRepository,
-    private val preferenceManager: PreferenceManager
+    private val preferenceManager: PreferenceManager,
+    private val dispatcher: com.example.aitranslator.offline.TranslationEngineDispatcher
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -42,12 +43,39 @@ class ProcessSegmentWorker @AssistedInject constructor(
         }
 
         try {
+            val mode = preferenceManager.translationMode.first()
             val apiKey = preferenceManager.geminiApiKey.first()
             val model = preferenceManager.geminiModel.first()
             val context = repository.getRecentContext(conversationId, segment.segmentNumber, windowSize = 3)
 
-            if (apiKey.isNotBlank()) {
-                // Direct Gemini Multimodal Pipeline (Audio -> Transcription + Context-Aware Translation)
+            if (mode == com.example.aitranslator.domain.model.TranslationMode.OFFLINE) {
+                // OFFLINE TRANSLATION MODE (Zero internet)
+                repository.updateSegmentStatus(segmentId, SegmentStatus.TRANSLATING)
+
+                val textToTranslate = segment.originalText.ifBlank { "Audio Segment #${segment.segmentNumber}" }
+                val offlineResult = dispatcher.translate(
+                    text = textToTranslate,
+                    sourceLanguage = conversation.sourceLanguage,
+                    targetLanguage = conversation.targetLanguage,
+                    contextText = context
+                )
+
+                if (offlineResult.isSuccess) {
+                    val res = offlineResult.getOrNull()!!
+                    repository.updateSegmentResult(
+                        segmentId,
+                        segment.originalText.ifBlank { "[Offline Audio Segment #${segment.segmentNumber}]" },
+                        res.translatedText,
+                        SegmentStatus.COMPLETED
+                    )
+                    handleAudioRetention(audioFile)
+                    return Result.success()
+                } else {
+                    repository.updateSegmentStatus(segmentId, SegmentStatus.FAILED, "Offline translation failed")
+                    return Result.failure()
+                }
+            } else if (apiKey.isNotBlank()) {
+                // Direct Gemini Multimodal Pipeline (Primary Engine)
                 repository.updateSegmentStatus(segmentId, SegmentStatus.TRANSLATING)
 
                 val geminiResult = repository.processAudioWithGemini(

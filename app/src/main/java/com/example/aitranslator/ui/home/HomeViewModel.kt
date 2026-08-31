@@ -45,7 +45,8 @@ data class HomeUiState(
     val amplitude: Float = 0f,
     val currentSegmentNumber: Int = 1,
     val elapsedRecordingSeconds: Long = 0L,
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val translationMode: com.example.aitranslator.domain.model.TranslationMode = com.example.aitranslator.domain.model.TranslationMode.AUTO
 )
 
 @HiltViewModel
@@ -100,9 +101,10 @@ class HomeViewModel @Inject constructor(
         combine(
             activeConvFlow,
             activeSegmentsFlow,
-            _elapsedSeconds
-        ) { activeConv, segments, elapsed ->
-            Triple(activeConv, segments, elapsed)
+            _elapsedSeconds,
+            preferenceManager.translationMode
+        ) { activeConv, segments, elapsed, mode ->
+            Tuple4(activeConv, segments, elapsed, mode)
         }
     ) { base1, base2, base3 ->
         HomeUiState(
@@ -116,9 +118,10 @@ class HomeViewModel @Inject constructor(
             isRecording = base2.v3,
             currentSegmentNumber = base2.v4,
             activeConversationId = base2.v5,
-            activeConversation = base3.first,
-            liveSegments = base3.second,
-            elapsedRecordingSeconds = base3.third,
+            activeConversation = base3.v1,
+            liveSegments = base3.v2,
+            elapsedRecordingSeconds = base3.v3,
+            translationMode = base3.v4,
             isLoading = false
         )
     }.stateIn(

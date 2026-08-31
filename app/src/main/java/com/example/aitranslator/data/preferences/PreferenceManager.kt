@@ -36,6 +36,23 @@ class PreferenceManager @Inject constructor(
         val KEY_DEBUG_MODE = booleanPreferencesKey("debug_mode")
         val KEY_GEMINI_API_KEY = stringPreferencesKey("gemini_api_key")
         val KEY_GEMINI_MODEL = stringPreferencesKey("gemini_model")
+        val KEY_TRANSLATION_MODE = stringPreferencesKey("translation_mode")
+        val KEY_ACTIVE_OFFLINE_MODEL_ID = stringPreferencesKey("active_offline_model_id")
+    }
+
+    val translationMode: Flow<com.example.aitranslator.domain.model.TranslationMode> = dataStore.data.map { prefs ->
+        val raw = prefs[KEY_TRANSLATION_MODE]
+        raw?.let {
+            try {
+                enumValueOf<com.example.aitranslator.domain.model.TranslationMode>(it)
+            } catch (_: Exception) {
+                com.example.aitranslator.domain.model.TranslationMode.AUTO
+            }
+        } ?: com.example.aitranslator.domain.model.TranslationMode.AUTO
+    }
+
+    val activeOfflineModelId: Flow<String> = dataStore.data.map { prefs ->
+        prefs[KEY_ACTIVE_OFFLINE_MODEL_ID] ?: "nllb-200-distilled-600m-int8"
     }
 
     val geminiApiKey: Flow<String> = dataStore.data.map { prefs ->
@@ -134,5 +151,13 @@ class PreferenceManager @Inject constructor(
 
     suspend fun setGeminiModel(model: String) {
         dataStore.edit { it[KEY_GEMINI_MODEL] = model.trim() }
+    }
+
+    suspend fun setTranslationMode(mode: com.example.aitranslator.domain.model.TranslationMode) {
+        dataStore.edit { it[KEY_TRANSLATION_MODE] = mode.name }
+    }
+
+    suspend fun setActiveOfflineModelId(modelId: String) {
+        dataStore.edit { it[KEY_ACTIVE_OFFLINE_MODEL_ID] = modelId.trim() }
     }
 }

@@ -43,6 +43,10 @@ fun SettingsScreen(
     var backendTestMessage by remember { mutableStateOf<String?>(null) }
     var isBackendTesting by remember { mutableStateOf(false) }
 
+    var showBenchmarkDialog by remember { mutableStateOf(false) }
+    var isBenchmarking by remember { mutableStateOf(false) }
+    var benchmarkResults by remember { mutableStateOf<List<com.example.aitranslator.ui.settings.BenchmarkItem>?>(null) }
+
     val intervalOptions = listOf(
         10 to "10 seconds (Debug / Fast Testing)",
         30 to "30 seconds",
@@ -71,6 +75,165 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Translation Mode Selection Section (AUTO / ONLINE / OFFLINE)
+            Text("Translation Engine Mode", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("Select how the app processes conversational translations:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    com.example.aitranslator.domain.model.TranslationMode.values().forEach { mode ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.setTranslationMode(mode) }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = state.translationMode == mode,
+                                onClick = { viewModel.setTranslationMode(mode) }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(mode.displayName, fontWeight = if (state.translationMode == mode) FontWeight.Bold else FontWeight.Normal, fontSize = 14.sp)
+                                Text(mode.description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Offline Translation Engine Section
+            Text("Offline On-Device Translation (Malay ↔ Urdu)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    val activeModel = state.offlineModels.find { it.modelId == state.activeOfflineModelId } ?: state.offlineModels.firstOrNull()
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = activeModel?.modelName ?: "NLLB-200 Malay ↔ Urdu (INT8)",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Status: ${activeModel?.status?.name ?: "NOT DOWNLOADED"} • Size: ~${(activeModel?.totalSize ?: 548_000_000L) / 1024 / 1024} MB",
+                                fontSize = 12.sp,
+                                color = when (activeModel?.status) {
+                                    com.example.aitranslator.domain.model.OfflineModelStatus.READY -> MaterialTheme.colorScheme.primary
+                                    com.example.aitranslator.domain.model.OfflineModelStatus.DOWNLOADING -> MaterialTheme.colorScheme.secondary
+                                    com.example.aitranslator.domain.model.OfflineModelStatus.CORRUPTED -> MaterialTheme.colorScheme.error
+                                    else -> MaterialTheme.colorScheme.outline
+                                },
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "License: ${activeModel?.license ?: "CC-BY-NC 4.0"} • Works 100% offline with zero internet.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Download Progress Bar
+                    if (state.downloadProgress.status == com.example.aitranslator.offline.DownloadStatus.DOWNLOADING ||
+                        state.downloadProgress.status == com.example.aitranslator.offline.DownloadStatus.PREPARING ||
+                        state.downloadProgress.status == com.example.aitranslator.offline.DownloadStatus.VERIFYING
+                    ) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        LinearProgressIndicator(
+                            progress = { state.downloadProgress.progress / 100f },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(state.downloadProgress.message, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                            Text("${state.downloadProgress.progress}%", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { viewModel.pauseModelDownload() }) {
+                                Text("Pause", fontSize = 12.sp)
+                            }
+                            OutlinedButton(onClick = { viewModel.cancelModelDownload() }) {
+                                Text("Cancel", fontSize = 12.sp)
+                            }
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (activeModel?.status != com.example.aitranslator.domain.model.OfflineModelStatus.READY) {
+                                Button(
+                                    onClick = { activeModel?.let { viewModel.startModelDownload(it) } },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Download Model")
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = {
+                                        activeModel.let {
+                                            viewModel.verifyModel(it.modelId) { _, _ -> }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Verify Integrity", fontSize = 12.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        viewModel.setTranslationMode(com.example.aitranslator.domain.model.TranslationMode.OFFLINE)
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Use Offline", fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = { viewModel.scanOfflineModels() }) {
+                                Text("Scan /Download Folder", fontSize = 12.sp)
+                            }
+                            TextButton(onClick = {
+                                isBenchmarking = true
+                                showBenchmarkDialog = true
+                                viewModel.runBenchmark { list ->
+                                    isBenchmarking = false
+                                    benchmarkResults = list
+                                }
+                            }) {
+                                Text("Quality Benchmark", fontSize = 12.sp)
+                            }
+                            if (activeModel?.status == com.example.aitranslator.domain.model.OfflineModelStatus.READY) {
+                                TextButton(
+                                    onClick = { activeModel.let { viewModel.deleteModel(it.modelId) } },
+                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Text("Delete", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Gemini AI Direct Mode Configuration Section
             Text("Google Gemini Direct AI Engine", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
@@ -617,6 +780,66 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showUrlDialog = false }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showBenchmarkDialog) {
+        AlertDialog(
+            onDismissRequest = { showBenchmarkDialog = false },
+            title = { Text("Offline Quality Benchmark (40 Tests)") },
+            text = {
+                if (isBenchmarking) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("Running 40 Malay ↔ Urdu sentences through on-device engine...", fontSize = 13.sp)
+                    }
+                } else {
+                    val list = benchmarkResults ?: emptyList()
+                    val avgLatency = if (list.isNotEmpty()) list.map { it.latencyMs }.average().toLong() else 0L
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            "Executed ${list.size} test cases • Average Latency: ${avgLatency} ms",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        list.forEachIndexed { idx, item ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                )
+                            ) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    Text(
+                                        "#${idx + 1} (${item.sourceLang.uppercase()} → ${item.targetLang.uppercase()}) [${item.latencyMs}ms]",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text("Input: ${item.sourceText}", fontSize = 12.sp)
+                                    Text("Output: ${item.translatedText}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showBenchmarkDialog = false }) {
+                    Text("Close")
                 }
             }
         )
