@@ -57,18 +57,64 @@ class ModelDownloadManager @Inject constructor(
             catch(e:Exception){_downloadState.value=_downloadState.value.copy(status=DownloadStatus.FAILED,message="Download failed: ${e.message}")}
         }
     }
-    private suspend fun download(url:String,file:File,id:String,index:Int,count:Int):Pair<Long,String>=withContext(Dispatchers.IO){
-        var old=if(file.exists())file.length()else 0L
-        var res=okHttpClient.newCall(Request.Builder().url(url).apply{if(old>0)header("Range","bytes=$old-")}.build()).execute()
-        if(!res.isSuccessful&&old>0){old=0;res.close();res=okHttpClient.newCall(Request.Builder().url(url).build()).execute()}
-        res.use{r->if(!r.isSuccessful)error("HTTP ${r.code} for ${file.name}");val b=r.body?:error("Empty ${file.name}");val append=old>0&&r.code==206;if(!append)old=0
-            FileOutputStream(file,append).use{o->b.byteStream().use{i->val buf=ByteArray(1024*1024);var n=old;var read:Int;val total=if(b.contentLength()>0)b.contentLength()+old else -1L
-                while(i.read(buf).also{read=it}!=-1){ensureActive();o.write(buf,0,read);n+=read;val p=if(total>0)(n*100/total).toInt()else 0;_downloadState.value=DownloadProgress(id,DownloadStatus.DOWNLOADING,(((index*100L)+p)/count).toInt().coerceIn(0,99),n,total,"Downloading ${file.name} ($p%)")}
-            }}
+    private suspend fun download(url: String, file: File, id: String, index: Int, count: Int): Pair<Long, String> = withContext(Dispatchers.IO) {
+        var old = if (file.exists()) file.length() else 0L
+        var res = okHttpClient.newCall(Request.Builder().url(url).apply { if (old > 0) header("Range", "bytes=$old-") }.build()).execute()
+        if (!res.isSuccessful && old > 0) {
+            old = 0L
+            res.close()
+            res = okHttpClient.newCall(Request.Builder().url(url).build()).execute()
         }
-        file.length() to sha256(file)
+        res.use { r ->
+            if (!r.isSuccessful) error("HTTP ${r.code} for ${file.name}")
+            val b = r.body ?: error("Empty ${file.name}")
+            val append = old > 0 && r.code == 206
+            if (!append) old = 0L
+            FileOutputStream(file, append).use { o ->
+                b.byteStream().use { i ->
+                    val buf = ByteArray(1024 * 1024)
+                    var n = old
+                    var read: Int
+                    val total = if (b.contentLength() > 0) b.contentLength() + old else -1L
+                    while (i.read(buf).also { read = it } != -1) {
+                        ensureActive()
+                        o.write(buf, 0, read)
+                        n += read
+                        val p = if (total > 0) (n * 100 / total).toInt() else 0
+                        _downloadState.value = DownloadProgress(
+                            modelId = id,
+                            status = DownloadStatus.DOWNLOADING,
+                            progress = (((index * 100L) + p) / count).toInt().coerceIn(0, 99),
+                            downloadedBytes = n,
+                            totalBytes = total,
+                            message = "Downloading ${file.name} ($p%)"
+                        )
+                    }
+                }
+            }
+        }
+        Pair(file.length(), sha256(file))
     }
-    private fun sha256(file:File):String{val d=MessageDigest.getInstance("SHA-256");file.inputStream().use{i->val b=ByteArray(1024*1024);var n:Int;while(i.read(b).also{n=it}!=-1)d.update(b,0,n)};return d.digest().joinToString(""){"%02x".format(it)}}
-    fun pauseDownload(){downloadJob?.cancel();_downloadState.value=_downloadState.value.copy(status=DownloadStatus.PAUSED,message="Download paused")}
-    fun cancelDownload(){downloadJob?.cancel();_downloadState.value=DownloadProgress(status=DownloadStatus.CANCELLED,message="Download cancelled")}
+
+    private fun sha256(file: File): String {
+        val d = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { i ->
+            val b = ByteArray(1024 * 1024)
+            var n: Int
+            while (i.read(b).also { n = it } != -1) {
+                d.update(b, 0, n)
+            }
+        }
+        return d.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun pauseDownload() {
+        downloadJob?.cancel()
+        _downloadState.value = _downloadState.value.copy(status = DownloadStatus.PAUSED, message = "Download paused")
+    }
+
+    fun cancelDownload() {
+        downloadJob?.cancel()
+        _downloadState.value = DownloadProgress(status = DownloadStatus.CANCELLED, message = "Download cancelled")
+    }
 }
