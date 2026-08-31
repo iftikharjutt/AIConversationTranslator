@@ -44,14 +44,17 @@ class ModelDownloadManager @Inject constructor(
     private var downloadJob: Job? = null
     private val downloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    // Verified upstream file names for the INT8 ONNX NLLB-200 package.
+    // The package is about 1.2 GB before filesystem overhead; it is not a small model.
     private val hfBaseUrl = "https://huggingface.co/Hosstia/nllb-200-distilled-600m-onnx/resolve/main"
-
-    private data class RemoteFile(val name: String, val url: String)
-
     private val remoteFiles = listOf(
-        RemoteFile("encoder_model_int8.onnx", "$hfBaseUrl/encoder_model_int8.onnx"),
-        RemoteFile("decoder_with_past_model_int8.onnx", "$hfBaseUrl/decoder_with_past_model_int8.onnx"),
-        RemoteFile("tokenizer.json", "$hfBaseUrl/tokenizer.json")
+        "encoder_model_int8.onnx",
+        "decoder_with_past_model_int8.onnx",
+        "tokenizer.json",
+        "config.json",
+        "generation_config.json",
+        "special_tokens_map.json",
+        "tokenizer_config.json"
     )
 
     fun startDownload(model: OfflineModel) {
@@ -63,20 +66,20 @@ class ModelDownloadManager @Inject constructor(
                 targetDir.mkdirs()
                 val stat = StatFs(targetDir.absolutePath)
                 val availableBytes = stat.availableBlocksLong * stat.blockSizeLong
-                val requiredBytes = 1_200_000_000L
+                val requiredBytes = 1_300_000_000L
                 if (availableBytes < requiredBytes) {
-                    _downloadState.value = DownloadProgress(model.modelId, DownloadStatus.FAILED, message = "At least 1.2 GB free storage is required for this model.")
+                    _downloadState.value = DownloadProgress(model.modelId, DownloadStatus.FAILED, message = "At least 1.3 GB free storage is required for this model.")
                     return@launch
                 }
 
-                _downloadState.value = DownloadProgress(model.modelId, DownloadStatus.PREPARING, message = "Preparing NLLB-200 INT8 model download...")
+                _downloadState.value = DownloadProgress(model.modelId, DownloadStatus.PREPARING, message = "Preparing verified NLLB-200 INT8 model package...")
 
                 val fileInfos = mutableListOf<ModelFileInfo>()
-                for ((index, remote) in remoteFiles.withIndex()) {
+                for ((index, name) in remoteFiles.withIndex()) {
                     ensureActive()
-                    val destination = File(targetDir, remote.name)
-                    val result = downloadFile(remote.url, destination, model.modelId, index, remoteFiles.size)
-                    fileInfos += ModelFileInfo(remote.name, result.first, result.second)
+                    val destination = File(targetDir, name)
+                    val result = downloadFile("$hfBaseUrl/$name", destination, model.modelId, index, remoteFiles.size)
+                    fileInfos += ModelFileInfo(name, result.first, result.second)
                 }
 
                 val manifest = ModelManifest(
@@ -87,18 +90,20 @@ class ModelDownloadManager @Inject constructor(
                     modelFiles = fileInfos,
                     expectedSize = fileInfos.sumOf { it.size },
                     sha256 = "",
-                    license = "See upstream model license before commercial distribution",
-                    sourceUrl = hfBaseUrl,
+                    license = "Apache-2.0 (verify upstream model card before distribution)",
+                    sourceUrl = "https://huggingface.co/Hosstia/nllb-200-distilled-600m-onnx",
                     createdAt = System.currentTimeMillis(),
                     runtime = "onnx-int8"
                 )
                 File(targetDir, "manifest.json").writeText(json.encodeToString(manifest))
 
+                // Downloaded is deliberately NOT marked READY until ModelScanner validates
+                // every required file and the ONNX runtime can open the model.
                 val installed = model.copy(
-                    modelId = "nllb-200-distilled-600m-int8",
+                    modelId = manifest.modelId,
                     modelName = manifest.modelName,
                     localPath = targetDir.absolutePath,
-                    status = OfflineModelStatus.READY,
+                    status = OfflineModelStatus.DOWNLOADED,
                     totalSize = manifest.expectedSize,
                     downloadedSize = manifest.expectedSize,
                     sha256 = "",
@@ -106,10 +111,10 @@ class ModelDownloadManager @Inject constructor(
                     license = manifest.license,
                     sourceUrl = manifest.sourceUrl,
                     runtime = manifest.runtime,
-                    lastVerifiedAt = System.currentTimeMillis()
+                    lastVerifiedAt = 0L
                 )
                 offlineModelDao.insertModel(OfflineModelEntity.fromDomain(installed))
-                _downloadState.value = DownloadProgress(model.modelId, DownloadStatus.COMPLETED, 100, manifest.expectedSize, manifest.expectedSize, "Real model files downloaded. Runtime validation is required before translation.")
+                _downloadState.value = DownloadProgress(model.modelId, DownloadStatus.COMPLETED, 100, manifest.expectedSize, manifest.expectedSize, "Model package downloaded. Verify it before enabling offline inference.")
             } catch (e: CancellationException) {
                 _downloadState.value = _downloadState.value.copy(status = DownloadStatus.CANCELLED, message = "Download cancelled")
             } catch (e: Exception) {
@@ -143,10 +148,9 @@ class ModelDownloadManager @Inject constructor(
                         ensureActive()
                         output.write(buffer, 0, read)
                         written += read
-                        val overallTotal = if (total > 0) total else 0L
-                        val fileProgress = if (overallTotal > 0) ((written * 100) / overallTotal).toInt() else 0
+                        val fileProgress = if (total > 0) ((written * 100) / total).toInt() else 0
                         val overall = (((fileIndex * 100L) + fileProgress) / fileCount).toInt().coerceIn(0, 99)
-                        _downloadState.value = DownloadProgress(modelId, DownloadStatus.DOWNLOADING, overall, written, overallTotal, "Downloading ${destination.name} ($fileProgress%)")
+                        _downloadState.value = DownloadProgress(modelId, DownloadStatus.DOWNLOADING, overall, written, if (total > 0) total else 0L, "Downloading ${destination.name} ($fileProgress%)")
                     }
                 }
             }
