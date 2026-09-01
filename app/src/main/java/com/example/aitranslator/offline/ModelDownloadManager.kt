@@ -17,7 +17,6 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,7 +37,6 @@ class ModelDownloadManager @Inject constructor(
     private val scope=CoroutineScope(Dispatchers.IO+SupervisorJob())
     private val base="https://huggingface.co/venddair/nllb-200-distilled-600M-onnx/resolve/main"
     private val files=listOf("encoder_model_int8.onnx","decoder_model_int8.onnx","sentencepiece.bpe.model","config.json","generation_config.json","special_tokens_map.json","tokenizer_config.json")
-    private val expectedBytes=1_150_000_000L
 
     fun startDownload(model:OfflineModel){
         if(downloadJob?.isActive==true){
@@ -47,26 +45,23 @@ class ModelDownloadManager @Inject constructor(
         }
         downloadJob=scope.launch {
             try{
-                // Always use app-private external storage. This avoids Android scoped-storage
-                // restrictions that can silently block writes to public Downloads on newer Android.
                 val root=context.getExternalFilesDir("models") ?: File(context.filesDir,"models")
                 val dir=File(root,"malay-urdu").apply{mkdirs()}
-                if(!dir.isDirectory || !dir.canWrite()) error("Cannot write to app model storage: ${dir.absolutePath}")
-                _downloadState.value=DownloadProgress(model.modelId,DownloadStatus.PREPARING,0,0,expectedBytes,"Connecting to model server...")
+                if(!dir.isDirectory || !dir.canWrite()) error("Cannot write to app model storage")
+                _downloadState.value=DownloadProgress(model.modelId,DownloadStatus.PREPARING,0,0,0,"Starting model download...")
 
                 val stat=StatFs(dir.absolutePath)
                 val free=stat.availableBlocksLong*stat.blockSizeLong
-                if(free < expectedBytes + 50_000_000L) error("Not enough storage. Need about 1.15 GB for the model; only ${free/1024/1024} MB is available.")
+                if(free < 1_200_000_000L) error("Not enough storage. About 1.2 GB free space is required.")
 
-                // Fail fast with a useful error before starting a 1+ GB download.
-                val probe=okHttpClient.newCall(Request.Builder().url("$base/config.json?download=true").head().build()).execute()
-                probe.use { if(!it.isSuccessful) error("Model server returned HTTP ${it.code}. Please check your internet connection.") }
-
+                // Do NOT use a HEAD probe here. Hugging Face resolve endpoints can redirect
+                // and/or reject HEAD even though a normal GET download works. The real GET
+                // below is the connectivity test and gives the user the actual HTTP error.
                 val infos=mutableListOf<ModelFileInfo>()
                 files.forEachIndexed{index,name->
                     ensureActive()
                     val f=File(dir,name)
-                    val r=download("$base/$name?download=true",f,model.modelId,index,files.size)
+                    val r=download("$base/$name",f,model.modelId,index,files.size)
                     infos+=ModelFileInfo(name,r.first,r.second)
                 }
                 _downloadState.value=DownloadProgress(model.modelId,DownloadStatus.VERIFYING,99,infos.sumOf{it.size},infos.sumOf{it.size},"Creating model manifest...")
@@ -82,7 +77,6 @@ class ModelDownloadManager @Inject constructor(
     private suspend fun download(url:String,file:File,id:String,index:Int,count:Int):Pair<Long,String> = withContext(Dispatchers.IO){
         var offset=if(file.isFile)file.length()else 0L
         var res=call(url,offset)
-        // Some CDNs do not honor Range. In that case restart this individual file safely.
         if(offset>0 && res.code!=206){res.close();offset=0L;file.delete();res=call(url,0L)}
         res.use{r->
             if(!r.isSuccessful)error("HTTP ${r.code} for ${file.name}")
