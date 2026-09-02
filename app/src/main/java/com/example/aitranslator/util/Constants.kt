@@ -10,9 +10,10 @@ object Constants {
     const val AUDIO_FORMAT = android.media.AudioFormat.ENCODING_PCM_16BIT
     const val BYTES_PER_SAMPLE = 2 // 16-bit PCM = 2 bytes per sample
     
-    // Default Durations in seconds
-    const val DEFAULT_SEGMENT_DURATION_SECONDS = 180 // 3 minutes
-    const val DEBUG_SEGMENT_DURATION_SECONDS = 10 // 10 seconds for debug/dev
+    // Translation chunks: keep recording continuous, but send completed audio
+    // to Gemini frequently so the UI does not appear to only record for minutes.
+    const val DEFAULT_SEGMENT_DURATION_SECONDS = 10
+    const val DEBUG_SEGMENT_DURATION_SECONDS = 5
     
     // Notification constants
     const val NOTIFICATION_CHANNEL_ID = "recording_service_channel"
