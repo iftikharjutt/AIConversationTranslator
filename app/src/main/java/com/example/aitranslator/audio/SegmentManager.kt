@@ -1,37 +1,30 @@
 package com.example.aitranslator.audio
 
 import android.content.Context
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.example.aitranslator.domain.model.SegmentStatus
 import com.example.aitranslator.domain.model.TranslationSegment
 import com.example.aitranslator.domain.repository.TranslationRepository
-import com.example.aitranslator.util.Constants
-import com.example.aitranslator.worker.ProcessSegmentWorker
+import com.example.aitranslator.worker.SegmentProcessor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class SegmentManager @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val repository: TranslationRepository
+    private val repository: TranslationRepository,
+    private val processor: SegmentProcessor
 ) : AudioSegmentListener {
 
-    private val coroutineScope = CoroutineScope(Dispatchers.IO)
+    private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var recorder: AudioRecorder? = null
 
     private val _currentSegmentNumber = MutableStateFlow(1)
@@ -49,7 +42,6 @@ class SegmentManager @Inject constructor(
         activeConversationId = conversationId
         _currentSegmentNumber.value = 1
         _errorMessage.value = null
-
         recorder = AudioRecorder(context, segmentDurationSeconds).apply {
             setSegmentListener(this@SegmentManager)
             startRecording(conversationId)
@@ -67,10 +59,12 @@ class SegmentManager @Inject constructor(
 
     override fun onSegmentCompleted(segmentNumber: Int, wavFile: File, startTime: Long, endTime: Long) {
         _currentSegmentNumber.value = segmentNumber + 1
+        // Process immediately in a dedicated coroutine. Recording never waits for translation,
+        // and completed segments no longer enter a WorkManager queue.
+        val conversationId = activeConversationId
         coroutineScope.launch {
-            // 1. Insert segment into Database with status RECORDED
             val segment = TranslationSegment(
-                conversationId = activeConversationId,
+                conversationId = conversationId,
                 segmentNumber = segmentNumber,
                 audioPath = wavFile.absolutePath,
                 startTime = startTime,
@@ -78,40 +72,19 @@ class SegmentManager @Inject constructor(
                 status = SegmentStatus.RECORDED
             )
             val segmentId = repository.addSegment(segment)
-
-            // 2. Enqueue WorkManager job asynchronously (RECORDING NEVER WAITS)
-            enqueueProcessingWorker(segmentId, activeConversationId)
+            when (processor.process(segmentId, conversationId)) {
+                SegmentProcessor.ProcessingResult.RETRY -> {
+                    // Network/rate-limit failures are recorded instead of silently queuing
+                    // the live recording pipeline. The next segment can still process immediately.
+                    repository.updateSegmentStatus(segmentId, SegmentStatus.FAILED, "Temporary processing failure; please retry")
+                }
+                SegmentProcessor.ProcessingResult.FAILED,
+                SegmentProcessor.ProcessingResult.SUCCESS -> Unit
+            }
         }
     }
 
     override fun onRecordingError(error: String) {
         _errorMessage.value = error
-    }
-
-    private fun enqueueProcessingWorker(segmentId: Long, conversationId: Long) {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        val workRequest = OneTimeWorkRequestBuilder<ProcessSegmentWorker>()
-            .setInputData(
-                workDataOf(
-                    Constants.WORKER_SEGMENT_ID_KEY to segmentId,
-                    Constants.WORKER_CONVERSATION_ID_KEY to conversationId
-                )
-            )
-            .setConstraints(constraints)
-            .setBackoffCriteria(
-                BackoffPolicy.EXPONENTIAL,
-                10,
-                TimeUnit.SECONDS
-            )
-            .build()
-
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            "process_segment_${segmentId}",
-            ExistingWorkPolicy.KEEP,
-            workRequest
-        )
     }
 }
